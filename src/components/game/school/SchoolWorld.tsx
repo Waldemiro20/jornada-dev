@@ -1,49 +1,82 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useFrame } from "@react-three/fiber";
-import { Html } from "@react-three/drei";
+import { useFrame, useThree } from "@react-three/fiber";
+import { Html, Sky } from "@react-three/drei";
 import {
   CanvasTexture,
   DoubleSide,
+  ExtrudeGeometry,
   Object3D,
   RepeatWrapping,
+  Shape,
   SRGBColorSpace,
+  TextureLoader,
   Vector3,
+  type DirectionalLight,
   type Group,
   type InstancedMesh,
   type Material,
   type Mesh,
   type MeshStandardMaterial,
   type PerspectiveCamera,
+  type Texture,
 } from "three";
-import { DevAvatar, PUNCH_DURATION, type AvatarAction } from "../DevAvatar";
 import { NpcFigure } from "./NpcFigure";
-import { npcs } from "@/game/people";
+import { CLASS_COLS, CLASS_ROWS, npcs } from "@/game/people";
 import type { AvatarLook } from "@/game/avatar";
 import {
+  BACK_Z,
+  BLOCK_X,
+  bridge,
   collide,
-  corridors,
+  corridorEast,
+  corridorWest,
   courtyard,
-  FACADE_COLOR,
-  FACADE_Z,
-  muretas,
-  patioSam,
-  MURETA_HEIGHT,
-  pillars,
+  courtyardEast,
   doorAngle,
   doorFront,
+  ENTRANCE_HALF,
+  FACADE_Z,
+  floorHeight,
+  FLOOR2_Y,
+  GUARD_H,
+  hall,
+  type Rect,
+  inRect,
   isInside,
+  LANDING_Y,
+  LEVEL_SPLIT,
+  muralWall,
+  sideExit,
+  OFFICE_LZ,
+  OUTER_X,
+  PARAPET_H,
+  parapets,
+  PATIO_X,
+  PILLAR_Z_EAST,
+  PILLAR_Z_WEST,
+  ramp,
+  ROOF_Y,
   roomById,
+  roomLevel,
   rooms,
+  roomWallH,
+  roomY,
+  SERVICE_LZ,
   spawn,
   toWorld,
+  upperCorridor,
+  upperRooms,
   walls,
   WALL_H,
+  WALL_H2,
   type CollectItem,
   type Mission,
   type Room,
+  type Wall,
 } from "@/game/school";
 
-export type Vec2 = { x: number; z: number };
+/** Posição do jogador no chão; `y` é a altura do piso onde ele está (térreo = 0). */
+export type Vec2 = { x: number; z: number; y?: number; yaw?: number };
 /** Ações do jogador: run é contínuo; jump/punch são pedidos consumidos no próximo quadro. */
 export type Controls = { run: boolean; jump: boolean; punch: boolean };
 
@@ -69,7 +102,7 @@ function B({
   r?: V3;
 }) {
   return (
-    <mesh position={p} rotation={r ?? [0, 0, 0]}>
+    <mesh position={p} rotation={r ?? [0, 0, 0]} castShadow receiveShadow>
       <boxGeometry args={s} />
       <meshStandardMaterial
         color={c}
@@ -128,23 +161,43 @@ function useTextTexture(lines: string[], bg: string, fg: string, width = 512, he
 
 const RED = "#901a1e"; // vermelho vinho institucional
 const RED_DARK = "#7a171a";
-const TRUSS = "#b3201f"; // treliça metálica vermelha
-const PAVER = "#b0b2b5"; // intertravado cinza claro
-const MOSAIC = "#d8c8b0"; // mosaico cerâmico bege
+const TRUSS = "#a3191d"; // treliça metálica vermelha
+const GREEN = "#14703a"; // verde institucional
+const GREEN_DARK = "#0f5a2e";
 const CERAMIC = "#e8e1d5"; // cerâmica industrial dos corredores/refeitório
 const METAL = "#2d3138";
 const FENCE_GREEN = "#1f4d2b";
 
-type Pattern = "tiles" | "pavers" | "waves" | "mosaic" | "mural" | "fence" | "emblem";
+type Pattern =
+  | "tiles"
+  | "pavers"
+  | "hallFloor"
+  | "azulejo"
+  | "facade"
+  | "roof"
+  | "ceramic"
+  | "mural"
+  | "fence"
+  | "emblem"
+  | "schoolPainting";
+
+/** Pátio de entrada: textura única em escala real (50 px por metro). */
+const HALL_PX = 50;
+/** Semicírculo bege (voltado para a Entrada) contornado pelo arco vermelho. */
+const ARC = { x: 0, z: 7.6, inner: 3.2, outer: 4.7 };
 
 const PATTERN_SIZE: Record<Pattern, [number, number]> = {
   tiles: [128, 128],
-  pavers: [128, 128],
-  waves: [256, 256],
-  mosaic: [128, 128],
-  mural: [1024, 448],
+  pavers: [512, 512],
+  hallFloor: [Math.round((hall.x1 - hall.x0) * HALL_PX), Math.round((hall.z1 - hall.z0) * HALL_PX)],
+  azulejo: [128, 256],
+  facade: [256, 256],
+  roof: [64, 64],
+  ceramic: [128, 128],
+  mural: [512, 680],
   fence: [64, 64],
   emblem: [256, 320],
+  schoolPainting: [1024, 256],
 };
 
 function seeded(seed: number) {
@@ -158,9 +211,58 @@ function seeded(seed: number) {
 function drawPattern(kind: Pattern, ctx: CanvasRenderingContext2D, w: number, h: number) {
   const rand = seeded(kind.length * 97 + 13);
   switch (kind) {
+    case "pavers":
+    case "hallFloor": {
+      // blocos retangulares em espinha de peixe (cinza com alguns beges); no pátio de
+      // entrada, um arco largo e contínuo vermelho contorna um semicírculo bege
+      const hallMode = kind === "hallFloor";
+      ctx.fillStyle = "#8d8a84";
+      ctx.fillRect(0, 0, w, h);
+      const u = hallMode ? 15 : 16; // 15 px = 0,30 m no pátio (50 px/m)
+      const tone = (x: number, y: number): "gray" | "beige" | "red" => {
+        if (hallMode) {
+          const wx = hall.x0 + x / HALL_PX;
+          const wz = hall.z0 + y / HALL_PX;
+          const r = Math.hypot(wx - ARC.x, wz - ARC.z);
+          if (wz >= ARC.z - 0.15) {
+            if (r < ARC.inner) return "beige";
+            if (r < ARC.outer) return "red";
+          }
+        }
+        return rand() < 0.12 ? "beige" : "gray";
+      };
+      const colors = {
+        gray: ["#c9cbcd", "#c1c3c6", "#cfd1d2"],
+        beige: ["#d9c7a6", "#d2bf9c", "#dfcfb1"],
+        red: ["#a8322b", "#9b2c26", "#b23a31"],
+      } as const;
+      // espinha de peixe 90°: degraus (k) deslocados pelo vetor (2u, -2u) (m)
+      const n = Math.ceil(Math.max(w, h) / u) + 4;
+      for (let m = -n; m <= n; m += 1)
+        for (let k = -2 * n; k <= 2 * n; k += 1) {
+          const bx = k * u + 2 * u * m;
+          const by = k * u - 2 * u * m;
+          const cells: [number, number, number, number][] = [
+            [bx, by, 2 * u, u],
+            [bx, by + u, u, 2 * u],
+          ];
+          for (const [cx, cy, cw, chh] of cells) {
+            if (cx > w || cy > h || cx + cw < 0 || cy + chh < 0) continue;
+            const t = tone(cx + cw / 2, cy + chh / 2);
+            const list = colors[t];
+            ctx.fillStyle = list[Math.floor(rand() * list.length)]!;
+            ctx.fillRect(cx + 1, cy + 1, cw - 2, chh - 2);
+          }
+        }
+      for (let k = 0; k < 900; k += 1) {
+        ctx.fillStyle = rand() > 0.5 ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)";
+        ctx.fillRect(rand() * w, rand() * h, 2, 2);
+      }
+      return;
+    }
     case "tiles": {
-      // placas quadradas cinza ardósia, fosco, com rejunte escuro
-      ctx.fillStyle = "#222527";
+      // placas quadradas escuras do Auditório, com rejunte
+      ctx.fillStyle = "#1f2224";
       ctx.fillRect(0, 0, w, h);
       const tones = ["#35393c", "#383c40", "#313537", "#3a3e42"];
       for (let i = 0; i < 2; i += 1)
@@ -172,125 +274,125 @@ function drawPattern(kind: Pattern, ctx: CanvasRenderingContext2D, w: number, h:
         }
       return;
     }
-    case "pavers": {
-      // piso intertravado em ziguezague (espinha de peixe)
-      ctx.fillStyle = PAVER;
+    case "azulejo": {
+      // parede interna: azulejo branco até meia altura, filete vermelho, pintura branca acima
+      ctx.fillStyle = "#f6f6f3";
       ctx.fillRect(0, 0, w, h);
-      for (let k = 0; k < 400; k += 1) {
-        ctx.fillStyle = rand() > 0.5 ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)";
-        ctx.fillRect(rand() * w, rand() * h, 3, 3);
-      }
-      ctx.strokeStyle = "#8f9195";
-      ctx.lineWidth = 2;
-      for (let y = 0; y <= h; y += 16) {
-        ctx.beginPath();
-        for (let x = 0; x <= w; x += 16) ctx.lineTo(x, y + ((x / 16) % 2 ? 8 : 0));
-        ctx.stroke();
-        for (let x = 0; x <= w; x += 32) {
-          ctx.beginPath();
-          ctx.moveTo(x, y);
-          ctx.lineTo(x, y + 16);
-          ctx.stroke();
+      const half = h * 0.5;
+      ctx.fillStyle = "#d9dadb";
+      ctx.fillRect(0, half, w, h - half);
+      for (let y = half; y < h; y += 32)
+        for (let x = 0; x < w; x += 32) {
+          ctx.fillStyle = "#fbfbfa";
+          ctx.fillRect(x + 1, y + 1, 30, 30);
+          ctx.fillStyle = "rgba(255,255,255,0.7)";
+          ctx.fillRect(x + 2, y + 2, 26, 3);
         }
+      ctx.fillStyle = "#b3201f";
+      ctx.fillRect(0, half - 10, w, 10);
+      ctx.fillStyle = "rgba(0,0,0,0.15)";
+      ctx.fillRect(0, half, w, 1);
+      return;
+    }
+    case "facade": {
+      // reboco branco com faixa e rodapé verde institucional
+      ctx.fillStyle = "#fbfbf8";
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = GREEN;
+      ctx.fillRect(0, h * 0.82, w, h * 0.18);
+      ctx.fillRect(0, h * 0.06, w, h * 0.06);
+      ctx.fillStyle = "rgba(0,0,0,0.04)";
+      for (let k = 0; k < 400; k += 1) ctx.fillRect(rand() * w, rand() * h, 2, 2);
+      return;
+    }
+    case "roof": {
+      // telha metálica trapezoidal
+      for (let x = 0; x < w; x += 1) {
+        const v = Math.sin((x / w) * Math.PI * 2);
+        const c = Math.round(196 + v * 26);
+        ctx.fillStyle = `rgb(${c},${c + 3},${c + 6})`;
+        ctx.fillRect(x, 0, 1, h);
       }
       return;
     }
-    case "waves": {
-      // blocos de concreto cinza e vermelho formando desenhos ondulados
-      ctx.fillStyle = PAVER;
+    case "ceramic": {
+      ctx.fillStyle = "#c9c2b6";
       ctx.fillRect(0, 0, w, h);
-      for (const base of [h * 0.25, h * 0.75]) {
-        ctx.fillStyle = RED;
-        ctx.beginPath();
-        for (let x = 0; x <= w; x += 4)
-          ctx.lineTo(x, base + Math.sin((x / w) * Math.PI * 2) * 22 - 14);
-        for (let x = w; x >= 0; x -= 4)
-          ctx.lineTo(x, base + Math.sin((x / w) * Math.PI * 2) * 22 + 14);
-        ctx.fill();
-      }
-      ctx.strokeStyle = "rgba(0,0,0,0.18)";
-      ctx.lineWidth = 1;
-      for (let x = 0; x <= w; x += 16) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-        ctx.stroke();
-      }
-      for (let y = 0; y <= h; y += 32) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-        ctx.stroke();
-      }
-      return;
-    }
-    case "mosaic": {
-      ctx.fillStyle = "#b9a98f";
-      ctx.fillRect(0, 0, w, h);
-      const tones = [MOSAIC, "#cdb99c", "#e2d4bf", "#c9b494"];
-      for (let x = 0; x < w; x += 16)
-        for (let y = 0; y < h; y += 16) {
-          ctx.fillStyle = tones[Math.floor(rand() * 4)]!;
-          ctx.fillRect(x + 1, y + 1, 14, 14);
+      for (let x = 0; x < w; x += 64)
+        for (let y = 0; y < h; y += 64) {
+          ctx.fillStyle = ["#e8e1d5", "#e3dccf", "#ece6db"][Math.floor(rand() * 3)]!;
+          ctx.fillRect(x + 1, y + 1, 62, 62);
         }
       return;
     }
     case "mural": {
-      // parede azul com sol, vegetação e a sigla SAM em letras coloridas
+      // parede azul de pé-direito alto: sol no alto, "SAM" colorido, escada de tijolos e vegetação
       const sky = ctx.createLinearGradient(0, 0, 0, h);
-      sky.addColorStop(0, "#2459a6");
-      sky.addColorStop(1, "#4b9be0");
+      sky.addColorStop(0, "#1a54a3");
+      sky.addColorStop(1, "#3f8fdc");
       ctx.fillStyle = sky;
       ctx.fillRect(0, 0, w, h);
+      const sx = w * 0.7;
+      const sy = 120;
       ctx.fillStyle = "#fcd34d";
       ctx.strokeStyle = "#fbbf24";
-      ctx.lineWidth = 10;
-      for (let i = 0; i < 12; i += 1) {
-        const a = (i / 12) * Math.PI * 2;
+      ctx.lineWidth = 9;
+      for (let i = 0; i < 14; i += 1) {
+        const a = (i / 14) * Math.PI * 2;
         ctx.beginPath();
-        ctx.moveTo(170 + Math.cos(a) * 95, 130 + Math.sin(a) * 95);
-        ctx.lineTo(170 + Math.cos(a) * 135, 130 + Math.sin(a) * 135);
+        ctx.moveTo(sx + Math.cos(a) * 72, sy + Math.sin(a) * 72);
+        ctx.lineTo(sx + Math.cos(a) * 108, sy + Math.sin(a) * 108);
         ctx.stroke();
       }
       ctx.beginPath();
-      ctx.arc(170, 130, 78, 0, Math.PI * 2);
+      ctx.arc(sx, sy, 60, 0, Math.PI * 2);
       ctx.fill();
-      for (const [color, amp, y0] of [
-        ["#2f8f3a", 40, h - 110],
-        ["#3fae4a", 28, h - 70],
-      ] as const) {
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.moveTo(0, h);
-        for (let x = 0; x <= w; x += 8) ctx.lineTo(x, y0 + Math.sin(x / 70 + amp) * amp * 0.6);
-        ctx.lineTo(w, h);
-        ctx.fill();
-      }
-      for (let i = 0; i < 9; i += 1) {
-        const x = 40 + i * 120 + rand() * 30;
-        ctx.fillStyle = "#1f7a33";
-        for (let k = 0; k < 5; k += 1) {
-          ctx.beginPath();
-          ctx.ellipse(x, h - 60, 12, 48, -0.9 + k * 0.45, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      ctx.font = "bold 230px sans-serif";
+      ctx.font = "bold 190px sans-serif";
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";
       ["S", "A", "M"].forEach((letter, i) => {
-        const x = 520 + i * 175;
-        const y = 200;
-        for (let d = 14; d > 0; d -= 2) {
+        const x = 110 + i * 150;
+        const y = 330;
+        for (let d = 12; d > 0; d -= 2) {
           ctx.fillStyle = "#1e1b4b";
           ctx.fillText(letter, x + d, y + d);
         }
-        ctx.fillStyle = ["#ef4444", "#facc15", "#22c55e"][i]!;
+        ctx.fillStyle = ["#22c55e", "#f97316", "#facc15"][i]!;
         ctx.fillText(letter, x, y);
         ctx.lineWidth = 6;
         ctx.strokeStyle = "#ffffff";
         ctx.strokeText(letter, x, y);
       });
+      // escada de tijolos subindo
+      for (let i = 0; i < 6; i += 1) {
+        const bx = 40 + i * 34;
+        const by = h - 50 - i * 24;
+        for (let r = 0; r < (h - by) / 12; r += 1)
+          for (let c = 0; c < 2; c += 1) {
+            ctx.fillStyle = (r + c) % 2 ? "#b45309" : "#c2410c";
+            ctx.fillRect(bx + c * 17 + ((r % 2) * 8 - 4), by + r * 12, 16, 11);
+          }
+      }
+      for (const [color, amp, y0] of [
+        ["#2f8f3a", 30, h - 95],
+        ["#3fae4a", 20, h - 55],
+      ] as const) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(0, h);
+        for (let x = 0; x <= w; x += 8) ctx.lineTo(x, y0 + Math.sin(x / 60 + amp) * amp * 0.6);
+        ctx.lineTo(w, h);
+        ctx.fill();
+      }
+      for (let i = 0; i < 5; i += 1) {
+        const x = 260 + i * 60 + rand() * 20;
+        ctx.fillStyle = "#1f7a33";
+        for (let k = 0; k < 5; k += 1) {
+          ctx.beginPath();
+          ctx.ellipse(x, h - 60, 10, 42, -0.9 + k * 0.45, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
       return;
     }
     case "fence": {
@@ -301,7 +403,7 @@ function drawPattern(kind: Pattern, ctx: CanvasRenderingContext2D, w: number, h:
       return;
     }
     case "emblem": {
-      // emblema estilizado do Governo do Estado (não é reprodução do brasão oficial)
+      // brasão estilizado (não é reprodução de brasão oficial)
       ctx.clearRect(0, 0, w, h);
       ctx.fillStyle = "#e5e7eb";
       ctx.beginPath();
@@ -311,7 +413,7 @@ function drawPattern(kind: Pattern, ctx: CanvasRenderingContext2D, w: number, h:
       ctx.quadraticCurveTo(w / 2, 300, 28, 160);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = "#15803d";
+      ctx.fillStyle = GREEN;
       ctx.beginPath();
       ctx.moveTo(44, 36);
       ctx.lineTo(w - 44, 36);
@@ -321,12 +423,114 @@ function drawPattern(kind: Pattern, ctx: CanvasRenderingContext2D, w: number, h:
       ctx.fill();
       ctx.fillStyle = "#facc15";
       ctx.beginPath();
-      ctx.arc(w / 2, 120, 46, 0, Math.PI * 2);
+      ctx.arc(w / 2, 110, 42, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 30px sans-serif";
+      ctx.fillStyle = RED;
+      ctx.font = "bold 40px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("CEARÁ", w / 2, 210);
+      ctx.textBaseline = "middle";
+      ctx.fillText("SAM", w / 2, 112);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 26px sans-serif";
+      ctx.fillText("EEEP", w / 2, 205);
+      return;
+    }
+    case "schoolPainting": {
+      // pintura da fachada da escola: céu, prédio verde e branco, pátio coberto
+      // com treliças vinho, coqueiros e o nome da escola
+      const sky = ctx.createLinearGradient(0, 0, 0, h * 0.75);
+      sky.addColorStop(0, "#3b82c4");
+      sky.addColorStop(1, "#bfe3f5");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, w, h);
+      // sol e nuvens em pinceladas
+      ctx.fillStyle = "#fde68a";
+      ctx.beginPath();
+      ctx.arc(w * 0.88, 48, 26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      for (const [cx, cy] of [
+        [140, 40],
+        [420, 28],
+        [700, 50],
+      ] as const)
+        for (let k = 0; k < 5; k += 1) {
+          ctx.beginPath();
+          ctx.ellipse(cx + k * 18 - 36, cy + (k % 2) * 6, 26, 12, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      const ground = h * 0.8;
+      // grama e calçada
+      ctx.fillStyle = "#4d9a3a";
+      ctx.fillRect(0, ground, w, h - ground);
+      ctx.fillStyle = "#cfc8bb";
+      ctx.fillRect(w * 0.44, ground, w * 0.12, h - ground);
+      // blocos laterais: 2 andares, branco com faixas verdes e janelas
+      const block = (x0: number, x1: number, top: number) => {
+        ctx.fillStyle = "#f5f5f0";
+        ctx.fillRect(x0, top, x1 - x0, ground - top);
+        ctx.fillStyle = GREEN;
+        ctx.fillRect(x0, top, x1 - x0, 8);
+        ctx.fillRect(x0, ground - 18, x1 - x0, 18);
+        ctx.fillRect(x0, (top + ground) / 2 - 3, x1 - x0, 6);
+        for (const y of [top + 18, (top + ground) / 2 + 12])
+          for (let x = x0 + 14; x + 30 < x1; x += 44) {
+            ctx.fillStyle = "#8cc4e0";
+            ctx.fillRect(x, y, 30, 26);
+            ctx.fillStyle = "rgba(255,255,255,0.5)";
+            ctx.fillRect(x + 2, y + 2, 10, 22);
+          }
+      };
+      block(40, w * 0.4, 80);
+      block(w * 0.6, w - 40, 80);
+      // pátio coberto central: pé-direito alto, treliças vinho e telhado metálico
+      const hx0 = w * 0.4;
+      const hx1 = w * 0.6;
+      ctx.fillStyle = "#cbd5e1";
+      ctx.fillRect(hx0 - 6, 52, hx1 - hx0 + 12, 10);
+      ctx.strokeStyle = RED;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(hx0, 66);
+      ctx.lineTo(hx1, 66);
+      for (let x = hx0; x < hx1; x += 20) {
+        ctx.moveTo(x, 66);
+        ctx.lineTo(x + 10, 80);
+        ctx.lineTo(x + 20, 66);
+      }
+      ctx.stroke();
+      ctx.fillStyle = "#3a3a3a";
+      ctx.fillRect(hx0, 82, hx1 - hx0, ground - 82);
+      ctx.fillStyle = RED;
+      for (const x of [hx0 + 4, hx1 - 14, (hx0 + hx1) / 2 - 5]) ctx.fillRect(x, 66, 10, ground - 66);
+      // letreiro com o nome da escola
+      ctx.fillStyle = GREEN_DARK;
+      ctx.fillRect(w * 0.27, ground - 62, w * 0.46, 30);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 20px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("EEEP Dr. Salomão Alves de Moura", w / 2, ground - 47);
+      // coqueiros
+      for (const x of [24, 300, 724, w - 24]) {
+        ctx.strokeStyle = "#7c4a26";
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(x, ground + 6);
+        ctx.quadraticCurveTo(x + 8, ground - 60, x, ground - 110);
+        ctx.stroke();
+        ctx.fillStyle = "#1f7a33";
+        for (let k = 0; k < 6; k += 1) {
+          ctx.beginPath();
+          ctx.ellipse(x, ground - 110, 6, 34, -1.3 + k * 0.52, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      // textura de tinta (pinceladas)
+      for (let k = 0; k < 2500; k += 1) {
+        ctx.fillStyle = rand() > 0.5 ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
+        ctx.fillRect(rand() * w, rand() * h, 3 + rand() * 6, 2);
+      }
       return;
     }
   }
@@ -378,7 +582,7 @@ function Floor({
 }) {
   const map = usePattern(pattern, s[0] / tile, s[1] / tile);
   return (
-    <mesh position={p} rotation={[-Math.PI / 2, 0, 0]}>
+    <mesh position={p} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
       <planeGeometry args={s} />
       <meshStandardMaterial map={map} roughness={0.9} />
     </mesh>
@@ -421,44 +625,6 @@ function Truss({
       ))}
     </group>
   );
-}
-
-/** Esmaece os filhos quando ficam entre a câmera e o jogador (como as paredes). */
-function FadeGroup({
-  posRef,
-  x0,
-  x1,
-  z,
-  children,
-}: {
-  posRef: { current: Vec2 };
-  x0: number;
-  x1: number;
-  z: number;
-  children: ReactNode;
-}) {
-  const ref = useRef<Group>(null);
-  const opacity = useRef(1);
-  useFrame(() => {
-    const group = ref.current;
-    if (!group) return;
-    const p = posRef.current;
-    const blocks = p.z < z + 0.4 && p.z > z - 9 && p.x > x0 - 2.5 && p.x < x1 + 2.5;
-    const target = blocks ? 0.18 : 1;
-    if (Math.abs(target - opacity.current) < 0.002) return;
-    opacity.current += (target - opacity.current) * 0.15;
-    group.traverse((obj) => {
-      const material = (obj as Mesh).material as Material | Material[] | undefined;
-      if (!material || Array.isArray(material)) return;
-      if (!material.transparent) {
-        material.transparent = true;
-        material.needsUpdate = true;
-      }
-      material.opacity = opacity.current;
-      material.depthWrite = opacity.current > 0.95;
-    });
-  });
-  return <group ref={ref}>{children}</group>;
 }
 
 function Sign({
@@ -514,25 +680,6 @@ function Chair({ x, z, color, face = 0 }: { x: number; z: number; color: string;
   );
 }
 
-function Desk({ x, z, color }: { x: number; z: number; color: string }) {
-  return (
-    <group>
-      <B p={[x, 0.74, z]} s={[0.7, 0.05, 0.5]} c={WOOD} />
-      <B p={[x, 0.36, z]} s={[0.6, 0.72, 0.04]} c={DARK} />
-      <Chair x={x} z={z + 0.45} color={color} />
-    </group>
-  );
-}
-
-function Board({ room, text }: { room: Room; text: string }) {
-  return (
-    <group>
-      <B p={[0, 1.5, -room.d / 2 + 0.13]} s={[2.9, 1.2, 0.05]} c="#e2e8f0" />
-      <Sign lines={[text]} p={[0, 1.5, -room.d / 2 + 0.17]} size={[2.7, 1.05]} fg="#1e293b" />
-    </group>
-  );
-}
-
 function Computer({ x, z }: { x: number; z: number }) {
   return (
     <group position={[x, 0, z]}>
@@ -547,53 +694,109 @@ function Computer({ x, z }: { x: number; z: number }) {
 /* Interiores                                                          */
 /* ------------------------------------------------------------------ */
 
+/** Quadro branco com moldura de alumínio e bandeja de pincéis. */
+function Whiteboard({ room, text }: { room: Room; text: string }) {
+  const z = -room.d / 2 + 0.13;
+  return (
+    <group>
+      <B p={[0, 1.5, z]} s={[3.1, 1.3, 0.05]} c="#9ca3af" />
+      <B p={[0, 1.5, z + 0.02]} s={[2.95, 1.15, 0.03]} c="#f8fafc" />
+      <Sign lines={[text]} p={[0, 1.55, z + 0.045]} size={[2.6, 0.9]} bg="#f8fafc" fg="#1e3a8a" />
+      <B p={[0, 0.9, z + 0.08]} s={[2.4, 0.04, 0.1]} c="#9ca3af" />
+      {[-0.4, -0.25, -0.1].map((x, i) => (
+        <B
+          key={x}
+          p={[x, 0.94, z + 0.08]}
+          s={[0.12, 0.03, 0.03]}
+          c={["#1d4ed8", "#dc2626", "#111827"][i]!}
+        />
+      ))}
+    </group>
+  );
+}
+
+/** Carteira escolar: tampo de MDF claro sobre estrutura metálica + cadeira. */
+function SchoolDesk({ x, z, color }: { x: number; z: number; color: string }) {
+  return (
+    <group position={[x, 0, z]}>
+      <B p={[0, 0.74, 0]} s={[0.6, 0.04, 0.45]} c="#e7d3b0" />
+      {[-0.26, 0.26].map((dx) => (
+        <B key={dx} p={[dx, 0.37, 0]} s={[0.03, 0.72, 0.4]} c={METAL} />
+      ))}
+      <Chair x={0} z={0.45} color={color} />
+    </group>
+  );
+}
+
 function Interior({ room }: { room: Room }) {
   const { w, d, accent } = room;
   const back = -d / 2;
   switch (room.kind) {
     case "classroom":
+      return (
+        <group>
+          <Whiteboard room={room} text={room.board ?? ""} />
+          {/* mesa do professor */}
+          <B p={[1.5, 0.75, back + 1.3]} s={[1.3, 0.05, 0.65]} c={WOOD} />
+          <B p={[1.5, 0.37, back + 1.3]} s={[1.2, 0.72, 0.6]} c="#7c4a26" />
+          <group position={[0, 0.25, 0]}>
+            <Computer x={1.8} z={back + 1.25} />
+          </group>
+          <Chair x={1.5} z={back + 0.8} color={DARK} face={Math.PI} />
+          {/* fileiras de carteiras escolares */}
+          {CLASS_COLS.flatMap((x) =>
+            CLASS_ROWS.map((z) => <SchoolDesk key={`${x}:${z}`} x={x} z={z} color={accent} />),
+          )}
+          <B p={[-w / 2 + 0.12, 1.6, -0.6]} s={[0.04, 0.9, 1.4]} c="#b45309" />
+          <B p={[-w / 2 + 0.15, 1.6, -0.6]} s={[0.02, 0.8, 1.3]} c="#fde68a" />
+          {[-1, 1].map((side) => (
+            <mesh key={side} position={[side * (w / 2 - 0.25), 2.3, 0.6]}>
+              <cylinderGeometry args={[0.22, 0.22, 0.08, 16]} />
+              <meshStandardMaterial color="#e5e7eb" />
+            </mesh>
+          ))}
+          <B p={[0, 2.45, back + 0.2]} s={[1, 0.3, 0.22]} c="#f8fafc" />
+        </group>
+      );
     case "lab-lang":
       return (
         <group>
-          <Board room={room} text={room.board ?? ""} />
+          <Whiteboard room={room} text={room.board ?? ""} />
           <B p={[1.4, 0.4, back + 1.3]} s={[1.3, 0.8, 0.6]} c="#92400e" />
           <Chair x={1.4} z={back + 0.75} color={DARK} face={Math.PI} />
-          {[-1.5, 0, 1.5].flatMap((x) =>
-            [-1, 0.5, 2].map((z) => <Desk key={`${x}:${z}`} x={x} z={z} color={accent} />),
+          {[-1.8, -0.6, 0.6, 1.8].flatMap((x) =>
+            [-1.6, 0, 1.6, 3.2].map((z) => (
+              <group key={`${x}:${z}`}>
+                <SchoolDesk x={x} z={z} color={accent} />
+                <mesh position={[x, 0.82, z]} rotation={[Math.PI / 2, 0, 0]}>
+                  <torusGeometry args={[0.1, 0.02, 6, 12, Math.PI]} />
+                  <meshStandardMaterial color="#111827" />
+                </mesh>
+              </group>
+            )),
           )}
-          {room.kind === "lab-lang" && (
-            <group>
-              {[-1.5, 0, 1.5].flatMap((x) =>
-                [-1, 0.5, 2].map((z) => (
-                  <mesh key={`h${x}:${z}`} position={[x, 0.8, z]} rotation={[Math.PI / 2, 0, 0]}>
-                    <torusGeometry args={[0.1, 0.02, 6, 12, Math.PI]} />
-                    <meshStandardMaterial color="#111827" />
-                  </mesh>
-                )),
-              )}
-              <mesh position={[-1.4, 1.05, back + 1.1]}>
-                <sphereGeometry args={[0.22, 16, 12]} />
-                <meshStandardMaterial color="#2563eb" />
-              </mesh>
-              <B p={[-1.4, 0.4, back + 1.1]} s={[0.5, 0.8, 0.5]} c={WOOD} />
-            </group>
-          )}
-          <B p={[-w / 2 + 0.12, 1.5, -0.5]} s={[0.04, 0.8, 1.2]} c={accent} />
+          <mesh position={[-1.6, 1.05, back + 1.1]}>
+            <sphereGeometry args={[0.22, 16, 12]} />
+            <meshStandardMaterial color="#2563eb" />
+          </mesh>
+          <B p={[-1.6, 0.4, back + 1.1]} s={[0.5, 0.8, 0.5]} c={WOOD} />
         </group>
       );
     case "lab-info":
       return (
         <group>
-          <Board room={room} text={room.board ?? ""} />
-          {[-1.3, 0.5, 2.1].flatMap((z) =>
-            [-1.3, 1.3].map((x) => (
+          <Whiteboard room={room} text={room.board ?? ""} />
+          {[-2, -0.2, 1.6, 3.4].flatMap((z) =>
+            [-1.5, 1.5].map((x) => (
               <group key={`${x}:${z}`}>
-                <B p={[x, 0.74, z]} s={[2, 0.05, 0.7]} c="#e5e7eb" />
-                <B p={[x, 0.36, z]} s={[1.9, 0.72, 0.05]} c={DARK} />
-                <Computer x={x - 0.5} z={z - 0.12} />
-                <Computer x={x + 0.5} z={z - 0.12} />
-                <Chair x={x - 0.5} z={z + 0.55} color={accent} />
-                <Chair x={x + 0.5} z={z + 0.55} color={accent} />
+                <B p={[x, 0.74, z]} s={[2.4, 0.05, 0.7]} c="#e5e7eb" />
+                <B p={[x, 0.36, z]} s={[2.3, 0.72, 0.05]} c={DARK} />
+                {[-0.75, 0, 0.75].map((dx) => (
+                  <group key={dx}>
+                    <Computer x={x + dx} z={z - 0.12} />
+                    <Chair x={x + dx} z={z + 0.55} color={accent} />
+                  </group>
+                ))}
               </group>
             )),
           )}
@@ -601,84 +804,30 @@ function Interior({ room }: { room: Room }) {
           <B p={[w / 2 - 0.45, 1.4, back + 0.76]} s={[0.4, 0.05, 0.02]} c="#22c55e" e="#22c55e" />
         </group>
       );
-    case "lab-math":
-      return (
-        <group>
-          <Board room={room} text="π  ·  a² + b² = c²  ·  f(x)" />
-          {/* mesas de trabalho em grupo */}
-          {[
-            [-1.2, -1.1],
-            [1.2, -1.1],
-            [-1.2, 1.4],
-            [1.2, 1.4],
-          ].map(([x, z]) => (
-            <group key={`${x}:${z}`} position={[x!, 0, z!]}>
-              <mesh position={[0, 0.74, 0]}>
-                <cylinderGeometry args={[0.65, 0.65, 0.05, 24]} />
-                <meshStandardMaterial color="#f5f5f4" roughness={0.75} />
-              </mesh>
-              <B p={[0, 0.37, 0]} s={[0.12, 0.72, 0.12]} c={DARK} />
-              {[0, 1, 2, 3].map((i) => {
-                const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-                return (
-                  <Chair
-                    key={i}
-                    x={Math.sin(a) * 0.95}
-                    z={Math.cos(a) * 0.95}
-                    color={accent}
-                    face={a}
-                  />
-                );
-              })}
-              {/* sólidos geométricos sobre a mesa */}
-              <mesh position={[-0.2, 0.86, 0.05]}>
-                <boxGeometry args={[0.18, 0.18, 0.18]} />
-                <meshStandardMaterial color="#facc15" />
-              </mesh>
-              <mesh position={[0.18, 0.88, -0.1]}>
-                <coneGeometry args={[0.12, 0.24, 4]} />
-                <meshStandardMaterial color="#a78bfa" />
-              </mesh>
-              <mesh position={[0.1, 0.85, 0.22]}>
-                <sphereGeometry args={[0.09, 14, 10]} />
-                <meshStandardMaterial color="#22d3ee" />
-              </mesh>
-            </group>
-          ))}
-          {/* estante com jogos e materiais */}
-          <B p={[-w / 2 + 0.3, 0.9, 0.2]} s={[0.4, 1.8, 2.4]} c={WOOD} />
-          {[0.5, 1.0, 1.5].map((y, i) => (
-            <B
-              key={y}
-              p={[-w / 2 + 0.52, y, 0.2]}
-              s={[0.04, 0.28, 2.1]}
-              c={["#7c3aed", "#f8fafc", "#a78bfa"][i]!}
-            />
-          ))}
-          {/* cartaz de geometria */}
-          <B p={[w / 2 - 0.12, 1.6, -0.6]} s={[0.04, 0.9, 1.3]} c="#f8fafc" />
-          <mesh position={[w / 2 - 0.15, 1.6, -0.6]} rotation={[0, -Math.PI / 2, 0]}>
-            <ringGeometry args={[0.22, 0.27, 3]} />
-            <meshBasicMaterial color="#7c3aed" />
-          </mesh>
-        </group>
-      );
+    case "lab-science":
+      return <ScienceLab room={room} />;
+    case "restroom":
+      return <Restroom room={room} />;
     case "teachers":
       return (
         <group>
-          <B p={[0, 0.38, 0]} s={[1.4, 0.76, 3.2]} c={WOOD} />
-          {[-1.1, -0.35, 0.4, 1.15].flatMap((z) => [
+          <B p={[0, 0.38, -0.5]} s={[1.4, 0.76, 3.6]} c={WOOD} />
+          {[-1.8, -1.0, -0.2, 0.6].flatMap((z) => [
             <Chair key={`l${z}`} x={-0.95} z={z} color={accent} face={-Math.PI / 2} />,
             <Chair key={`r${z}`} x={0.95} z={z} color={accent} face={Math.PI / 2} />,
           ])}
+          {/* escaninhos dos professores */}
           <B p={[0, 0.95, back + 0.25]} s={[w - 1.2, 1.9, 0.45]} c="#64748b" />
           {[-2, -1, 0, 1, 2].map((x) => (
             <B key={x} p={[x * 0.9, 0.95, back + 0.48]} s={[0.02, 1.85, 0.01]} c="#1e293b" />
           ))}
-          <B p={[2.4, 0.45, 1.8]} s={[0.6, 0.9, 1.2]} c="#e7e5e4" />
-          <B p={[2.4, 1.05, 1.6]} s={[0.3, 0.3, 0.3]} c="#111827" />
+          <B p={[2.2, 0.45, 3.2]} s={[0.6, 0.9, 1.2]} c="#e7e5e4" />
+          <B p={[2.2, 1.05, 3]} s={[0.3, 0.3, 0.3]} c="#111827" />
+          <B p={[-w / 2 + 0.12, 1.6, 2.4]} s={[0.04, 0.9, 1.6]} c="#b45309" />
         </group>
       );
+    case "office":
+      return <Secretaria room={room} />;
     case "library":
       return <Library room={room} />;
     case "auditorium":
@@ -686,50 +835,308 @@ function Interior({ room }: { room: Room }) {
     case "canteen":
       return <Canteen room={room} />;
     case "court":
-      return (
-        <group>
-          {[
-            [0, 0.03, -d / 2 + 0.35, w - 0.6, 0.06],
-            [0, 0.03, d / 2 - 0.35, w - 0.6, 0.06],
-          ].map(([x, y, z, sx, sz]) => (
-            <B key={`h${z}`} p={[x!, y!, z!]} s={[sx!, 0.01, sz!]} c="#f8fafc" />
-          ))}
-          {[-w / 2 + 0.3, 0, w / 2 - 0.3].map((x) => (
-            <B key={`v${x}`} p={[x, 0.03, 0]} s={[0.06, 0.01, d - 0.7]} c="#f8fafc" />
-          ))}
-          <mesh position={[0, 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[1.5, 1.6, 40]} />
-            <meshBasicMaterial color="#f8fafc" />
-          </mesh>
-          {[-1, 1].map((side) => (
-            <group key={side} position={[side * (w / 2 - 0.45), 0, 0]}>
-              <B p={[0, 0.6, -1]} s={[0.08, 1.2, 0.08]} c="#f8fafc" />
-              <B p={[0, 0.6, 1]} s={[0.08, 1.2, 0.08]} c="#f8fafc" />
-              <B p={[0, 1.2, 0]} s={[0.08, 0.08, 2.08]} c="#f8fafc" />
-            </group>
-          ))}
-          {/* estrutura da cobertura: pilares nos cantos e do lado da arquibancada */}
-          {[-w / 2, -w / 4, 0, w / 4, w / 2].map((x) => (
-            <B key={`pn${x}`} p={[x, 3.5, -d / 2]} s={[0.3, 7, 0.3]} c={RED} />
-          ))}
-          {[-w / 2, w / 2].map((x) => (
-            <B key={`ps${x}`} p={[x, 3.5, d / 2]} s={[0.3, 7, 0.3]} c={RED} />
-          ))}
-          <Truss p={[0, 7.2, -d / 2]} length={w + 0.2} h={0.6} />
-          {[-w / 2, -w / 4, 0, w / 4, w / 2].map((x) => (
-            <Truss key={`bs${x}`} p={[x, 7.2, 0]} length={d + 0.2} h={0.6} r={Math.PI / 2} />
-          ))}
-          {[0, 1, 2].map((i) => (
+      return <Court room={room} />;
+  }
+}
+
+/** Secretaria: portas de vidro, janelas de atendimento e salas da diretoria ao fundo. */
+function Secretaria({ room }: { room: Room }) {
+  const { w, d } = room;
+  const back = -d / 2;
+  return (
+    <group>
+      {/* recepção: cadeiras de espera voltadas para as janelas de atendimento */}
+      {[-2.4, -1.6, -0.8, 0].map((x) => (
+        <Chair key={`a${x}`} x={x} z={3} color="#1f2937" />
+      ))}
+      <B p={[-1.2, 0.25, 3]} s={[3, 0.04, 0.1]} c={METAL} />
+      <B p={[w / 2 - 0.4, 0.55, d / 2 - 0.6]} s={[0.4, 1.1, 0.4]} c="#e5e7eb" />
+      {/* janelas de atendimento na divisória */}
+      {[-1.9, -0.1].map((x) => (
+        <group key={x} position={[x, 0, SERVICE_LZ]}>
+          <B p={[0, 1.6, 0.02]} s={[1.3, 1.0, 0.04]} c="#bfdbfe" e="#dbeafe" ei={0.15} />
+          <B p={[0, 1.08, 0.18]} s={[1.5, 0.05, 0.4]} c="#d6d3d1" />
+          <B p={[0, 2.12, 0.13]} s={[1.5, 0.05, 0.1]} c={GREEN} />
+        </group>
+      ))}
+      <Sign
+        lines={["ATENDIMENTO"]}
+        p={[-1, 2.45, SERVICE_LZ + 0.12]}
+        size={[2.4, 0.32]}
+        bg={GREEN}
+        fg="#ffffff"
+      />
+      {/* área interna da secretaria */}
+      {[-1.9, -0.1].map((x) => (
+        <group key={`m${x}`}>
+          <B p={[x, 0.74, SERVICE_LZ - 0.6]} s={[1.3, 0.05, 0.6]} c={WOOD} />
+          <B p={[x, 0.37, SERVICE_LZ - 0.6]} s={[1.2, 0.72, 0.55]} c="#7c4a26" />
+          <Computer x={x} z={SERVICE_LZ - 0.75} />
+        </group>
+      ))}
+      <Chair x={-0.1} z={SERVICE_LZ - 1.0} color={DARK} face={Math.PI} />
+      {[-2.6, 2.6].map((x) => (
+        <B key={x} p={[x, 0.7, OFFICE_LZ + 0.4]} s={[0.6, 1.4, 0.5]} c="#9ca3af" />
+      ))}
+      {/* salas da diretoria / administração */}
+      {[
+        [-w / 4, "DIREÇÃO", -1.5],
+        [w / 4, "COORDENAÇÃO", 1.5],
+      ].map(([x, label, door]) => (
+        <group key={label as string}>
+          <group position={[x as number, 0, 0]}>
+            <B p={[0, 0.74, back + 0.9]} s={[1.3, 0.05, 0.7]} c={WOOD} />
+            <B p={[0, 0.37, back + 0.9]} s={[1.2, 0.72, 0.65]} c="#7c4a26" />
+            <Chair x={0} z={back + 0.4} color={DARK} face={Math.PI} />
+            <Chair x={-0.35} z={back + 1.7} color={GREEN} />
+            <Chair x={0.35} z={back + 1.7} color={GREEN} />
+          </group>
+          <Sign
+            lines={[label as string]}
+            p={[door as number, 2.4, OFFICE_LZ + 0.12]}
+            size={[1.4, 0.28]}
+            bg={GREEN}
+            fg="#ffffff"
+          />
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/** Laboratório de Química, Biologia e Física: bancadas com pias, vidrarias e microscópios. */
+function ScienceLab({ room }: { room: Room }) {
+  const { w, d, accent } = room;
+  const back = -d / 2;
+  const flasks = ["#22d3ee", "#a3e635", "#f472b6", "#fbbf24"];
+  return (
+    <group>
+      <Whiteboard room={room} text={room.board ?? ""} />
+      {/* tabela periódica */}
+      <B p={[-w / 2 + 0.12, 1.6, -1]} s={[0.04, 1.1, 1.9]} c="#f8fafc" />
+      {Array.from({ length: 18 }, (_, i) => (
+        <B
+          key={i}
+          p={[-w / 2 + 0.15, 1.3 + (i % 3) * 0.28, -1.8 + Math.floor(i / 3) * 0.3]}
+          s={[0.02, 0.22, 0.24]}
+          c={["#fca5a5", "#93c5fd", "#86efac", "#fde68a"][i % 4]!}
+        />
+      ))}
+      {/* bancadas de granito com pia */}
+      {[-3.2, -1.1, 1.1, 3.2].flatMap((x) =>
+        [-1.6, 1.6].map((z) => (
+          <group key={`${x}:${z}`} position={[x, 0, z]}>
+            <B p={[0, 0.45, 0]} s={[1.9, 0.9, 1]} c="#e5e7eb" />
+            <B p={[0, 0.92, 0]} s={[2, 0.05, 1.1]} c="#1f2937" />
+            <B p={[0.6, 0.95, 0]} s={[0.4, 0.02, 0.3]} c="#94a3b8" />
+            <B p={[0.6, 1.1, -0.18]} s={[0.04, 0.3, 0.04]} c="#9ca3af" />
+            {[-0.6, -0.4, -0.2].map((fx, i) => (
+              <mesh key={fx} position={[fx, 1.04, 0.15]}>
+                <coneGeometry args={[0.07, 0.18, 12]} />
+                <meshStandardMaterial
+                  color={flasks[(i + Math.round(x)) % 4]!}
+                  transparent
+                  opacity={0.75}
+                />
+              </mesh>
+            ))}
+            {[-1, 1].map((side) => (
+              <mesh key={side} position={[side * 0.55, 0.32, side * 0.85]}>
+                <cylinderGeometry args={[0.18, 0.18, 0.64, 12]} />
+                <meshStandardMaterial color={accent} />
+              </mesh>
+            ))}
+          </group>
+        )),
+      )}
+      {/* microscópio, esqueleto (Biologia) e plano inclinado (Física) */}
+      <group position={[3.2, 0.95, -1.9]}>
+        <B p={[0, 0.03, 0]} s={[0.2, 0.05, 0.25]} c="#111827" />
+        <B p={[0, 0.2, -0.06]} s={[0.05, 0.3, 0.05]} c="#111827" />
+        <B p={[0, 0.33, 0.02]} s={[0.06, 0.16, 0.06]} r={[0.5, 0, 0]} c="#e5e7eb" />
+      </group>
+      <group position={[w / 2 - 0.6, 0, back + 0.8]}>
+        <mesh position={[0, 1.55, 0]}>
+          <sphereGeometry args={[0.13, 12, 10]} />
+          <meshStandardMaterial color="#f5f5f4" />
+        </mesh>
+        <B p={[0, 1.15, 0]} s={[0.3, 0.55, 0.12]} c="#f5f5f4" />
+        <B p={[-0.08, 0.5, 0]} s={[0.05, 0.75, 0.05]} c="#f5f5f4" />
+        <B p={[0.08, 0.5, 0]} s={[0.05, 0.75, 0.05]} c="#f5f5f4" />
+        <B p={[0, 0.03, 0]} s={[0.4, 0.06, 0.4]} c={METAL} />
+      </group>
+      <B p={[-3.2, 1.1, -1.6]} s={[0.9, 0.04, 0.2]} r={[0, 0, 0.35]} c={WOOD} />
+      {/* armário de vidrarias e chuveiro de emergência */}
+      <B p={[-w / 2 + 0.35, 1, back + 0.6]} s={[0.5, 2, 1.4]} c="#cbd5e1" />
+      <B p={[w / 2 - 0.2, 2.2, d / 2 - 0.7]} s={[0.3, 0.05, 0.3]} c="#16a34a" />
+      <B p={[w / 2 - 0.2, 1.2, d / 2 - 0.7]} s={[0.05, 2, 0.05]} c="#16a34a" />
+    </group>
+  );
+}
+
+/** Sanitários: cabines, bancada com cubas e espelho. */
+function Restroom({ room }: { room: Room }) {
+  const { w, d, accent } = room;
+  const back = -d / 2;
+  const stalls = 4;
+  const sw = (w - 0.4) / stalls;
+  return (
+    <group>
+      {Array.from({ length: stalls }, (_, i) => -w / 2 + 0.2 + sw * (i + 0.5)).map((x) => (
+        <group key={x} position={[x, 0, back + 0.9]}>
+          <B p={[sw / 2, 1, 0]} s={[0.04, 2, 1.5]} c={accent} />
+          <B p={[0, 1, 0.75]} s={[sw - 0.15, 1.8, 0.04]} c={accent} />
+          <B p={[0, 0.25, -0.35]} s={[0.4, 0.4, 0.55]} c="#f8fafc" />
+        </group>
+      ))}
+      <B p={[0, 0.85, 1.6]} s={[w - 1, 0.1, 0.55]} c="#d6d3d1" />
+      {[-1.4, 0, 1.4].map((x) => (
+        <B key={x} p={[x, 0.87, 1.6]} s={[0.4, 0.04, 0.3]} c="#94a3b8" />
+      ))}
+      <B p={[0, 1.6, 1.88]} s={[w - 1.2, 0.8, 0.02]} c="#bfdbfe" e="#dbeafe" ei={0.2} />
+    </group>
+  );
+}
+
+/** Poltronas instanciadas (assento + encosto) em fileiras. */
+function SeatRows({ seats, color }: { seats: V3[]; color: string }) {
+  const cushions = useRef<InstancedMesh>(null);
+  const backs = useRef<InstancedMesh>(null);
+  useEffect(() => {
+    const dummy = new Object3D();
+    seats.forEach(([x, y, z], i) => {
+      dummy.position.set(x, y + 0.42, z);
+      dummy.updateMatrix();
+      cushions.current?.setMatrixAt(i, dummy.matrix);
+      dummy.position.set(x, y + 0.72, z + 0.22);
+      dummy.updateMatrix();
+      backs.current?.setMatrixAt(i, dummy.matrix);
+    });
+    if (cushions.current) cushions.current.instanceMatrix.needsUpdate = true;
+    if (backs.current) backs.current.instanceMatrix.needsUpdate = true;
+  }, [seats]);
+  return (
+    <group>
+      <instancedMesh ref={cushions} args={[undefined, undefined, seats.length]}>
+        <boxGeometry args={[0.5, 0.14, 0.46]} />
+        <meshStandardMaterial color={color} roughness={0.9} />
+      </instancedMesh>
+      <instancedMesh ref={backs} args={[undefined, undefined, seats.length]}>
+        <boxGeometry args={[0.5, 0.55, 0.1]} />
+        <meshStandardMaterial color={color} roughness={0.9} />
+      </instancedMesh>
+    </group>
+  );
+}
+
+/** Plateia em rampa de 8,33 %, palco com cortinas e rampa lateral de acesso. */
+const AUDIENCE_SLOPE = 0.0833;
+
+function Auditorium({ room }: { room: Room }) {
+  const { w, d } = room;
+  const back = -d / 2;
+  const stageH = 0.5;
+  const stageD = 2.4;
+  const rows = useMemo(() => Array.from({ length: 6 }, (_, i) => -1.6 + i * 0.85), []);
+  // poltronas por fileira conforme a largura (deixa o corredor da rampa à direita)
+  const perRow = Math.max(4, Math.floor((w - 2.4) / 0.6));
+  const rowW = perRow * 0.6 + 0.6;
+  const rowX = -0.6;
+  const seats = useMemo<V3[]>(
+    () =>
+      rows.flatMap((z) => {
+        const y = (z - rows[0]!) * AUDIENCE_SLOPE;
+        return Array.from(
+          { length: perRow },
+          (_, i) => [rowX - ((perRow - 1) * 0.6) / 2 + i * 0.6, y, z] as V3,
+        );
+      }),
+    [rows, perRow],
+  );
+  const rampLen = stageH / AUDIENCE_SLOPE;
+  const rampX = w / 2 - 0.6;
+  const rampTilt = Math.atan2(stageH, rampLen);
+  return (
+    <group>
+      <B p={[0, stageH / 2, back + stageD / 2]} s={[w - 0.4, stageH, stageD]} c="#4a2c18" />
+      <Sign
+        lines={["EXPOTEC", "EEEP Dr. Salomão Alves de Moura"]}
+        p={[0, 1.65, back + 0.13]}
+        size={[Math.min(7, w - 2.6), 1.4]}
+        bg="#0f3d22"
+        fg="#dcfce7"
+        glow
+      />
+      {[-1, 1].map((side) => (
+        <group key={side}>
+          {[0, 1, 2].map((k) => (
             <B
-              key={i}
-              p={[0, 0.15 + i * 0.15, -d / 2 + 0.9 - i * 0.45]}
-              s={[12, 0.3 + i * 0.3, 0.45]}
-              c="#64748b"
+              key={k}
+              p={[side * (w / 2 - 0.9 + k * 0.32), stageH + 1, back + 0.3 + (k % 2) * 0.06]}
+              s={[0.3, 2, 0.1]}
+              c={k % 2 ? "#7f1d1d" : "#6b0f1a"}
             />
           ))}
         </group>
-      );
-  }
+      ))}
+      <B p={[0, 2.6, back + 0.3]} s={[w - 0.4, 0.3, 0.14]} c="#6b0f1a" />
+      <B p={[2, stageH + 0.5, back + 1.4]} s={[0.6, 1, 0.45]} c={WOOD} />
+      <B
+        p={[rampX, stageH / 2 - 0.03, back + stageD + rampLen / 2]}
+        s={[0.8, 0.08, Math.hypot(rampLen, stageH)]}
+        r={[rampTilt, 0, 0]}
+        c="#78716c"
+      />
+      {rows.slice(1).map((z) => {
+        const h = (z - rows[0]!) * AUDIENCE_SLOPE;
+        return <B key={z} p={[rowX, h / 2, z + 0.1]} s={[rowW, h, 0.85]} c="#3f3a36" />;
+      })}
+      <SeatRows seats={seats} color="#111111" />
+    </group>
+  );
+}
+
+/** Quadra poliesportiva coberta (pilares e tesouras vinho). */
+function Court({ room }: { room: Room }) {
+  const { w, d } = room;
+  return (
+    <group>
+      {[-d / 2 + 0.35, d / 2 - 0.35].map((z) => (
+        <B key={`h${z}`} p={[0, 0.03, z]} s={[w - 0.6, 0.01, 0.06]} c="#f8fafc" />
+      ))}
+      {[-w / 2 + 0.3, 0, w / 2 - 0.3].map((x) => (
+        <B key={`v${x}`} p={[x, 0.03, 0]} s={[0.06, 0.01, d - 0.7]} c="#f8fafc" />
+      ))}
+      <mesh position={[0, 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[1.5, 1.6, 40]} />
+        <meshBasicMaterial color="#f8fafc" />
+      </mesh>
+      {[-1, 1].map((side) => (
+        <group key={side} position={[side * (w / 2 - 0.45), 0, 0]}>
+          <B p={[0, 0.6, -1]} s={[0.08, 1.2, 0.08]} c="#f8fafc" />
+          <B p={[0, 0.6, 1]} s={[0.08, 1.2, 0.08]} c="#f8fafc" />
+          <B p={[0, 1.2, 0]} s={[0.08, 0.08, 2.08]} c="#f8fafc" />
+        </group>
+      ))}
+      {[-w / 2, -w / 4, 0, w / 4, w / 2].flatMap((x) =>
+        [-d / 2, d / 2].map((z) => (
+          <B key={`p${x}:${z}`} p={[x, 3.5, z]} s={[0.3, 7, 0.3]} c={RED} />
+        )),
+      )}
+      {[-w / 2, -w / 4, 0, w / 4, w / 2].map((x) => (
+        <Truss key={`bs${x}`} p={[x, 7.2, 0]} length={d + 0.2} h={0.6} r={Math.PI / 2} />
+      ))}
+      <MetalRoof p={[0, 7.6, 0]} s={[w + 0.6, d + 0.6]} />
+      {[0, 1, 2].map((i) => (
+        <B
+          key={i}
+          p={[0, 0.15 + i * 0.15, -d / 2 + 0.9 - i * 0.45]}
+          s={[12, 0.3 + i * 0.3, 0.45]}
+          c="#64748b"
+        />
+      ))}
+    </group>
+  );
 }
 
 const BOOK_COLORS = ["#1d4ed8", "#b91c1c", "#15803d", "#a16207", "#7c3aed"];
@@ -861,127 +1268,35 @@ function Library({ room }: { room: Room }) {
   );
 }
 
-/** Poltronas instanciadas (assento + encosto) em fileiras. */
-function SeatRows({ seats, color }: { seats: V3[]; color: string }) {
-  const cushions = useRef<InstancedMesh>(null);
-  const backs = useRef<InstancedMesh>(null);
-  useEffect(() => {
-    const dummy = new Object3D();
-    seats.forEach(([x, y, z], i) => {
-      dummy.position.set(x, y + 0.42, z);
-      dummy.updateMatrix();
-      cushions.current?.setMatrixAt(i, dummy.matrix);
-      dummy.position.set(x, y + 0.72, z + 0.22);
-      dummy.updateMatrix();
-      backs.current?.setMatrixAt(i, dummy.matrix);
-    });
-    if (cushions.current) cushions.current.instanceMatrix.needsUpdate = true;
-    if (backs.current) backs.current.instanceMatrix.needsUpdate = true;
-  }, [seats]);
+/** Telhado de telhas metálicas galvanizadas (visível por baixo e por cima). */
+function MetalRoof({ p, s }: { p: V3; s: [number, number] }) {
+  const roof = usePattern("roof", s[0], 1);
   return (
-    <group>
-      <instancedMesh ref={cushions} args={[undefined, undefined, seats.length]}>
-        <boxGeometry args={[0.5, 0.14, 0.46]} />
-        <meshStandardMaterial color={color} roughness={0.9} />
-      </instancedMesh>
-      <instancedMesh ref={backs} args={[undefined, undefined, seats.length]}>
-        <boxGeometry args={[0.5, 0.55, 0.1]} />
-        <meshStandardMaterial color={color} roughness={0.9} />
-      </instancedMesh>
-    </group>
+    <mesh position={p} rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
+      <planeGeometry args={s} />
+      <meshStandardMaterial map={roof} metalness={0.55} roughness={0.4} side={DoubleSide} />
+    </mesh>
   );
 }
 
-/** Plateia em rampa de 8,33 %, poltronas pretas no centro e corredores laterais. */
-const AUDIENCE_SLOPE = 0.0833;
-
-function Auditorium({ room }: { room: Room }) {
-  const { w, d } = room;
-  const back = -d / 2;
-  const stageH = 0.5;
-  const stageD = 2.4;
-  const rows = useMemo(() => Array.from({ length: 6 }, (_, i) => -1.4 + i * 0.85), []);
-  const seats = useMemo<V3[]>(
-    () =>
-      rows.flatMap((z) => {
-        const y = (z - rows[0]!) * AUDIENCE_SLOPE;
-        // fileiras duplas: pares de poltronas lado a lado
-        return Array.from({ length: 12 }, (_, i) => {
-          const x = -3.3 + i * 0.6 + (i % 2 ? -0.03 : 0.03);
-          return [x, y, z] as V3;
-        });
-      }),
-    [rows],
-  );
-  const rampLen = stageH / AUDIENCE_SLOPE;
-  const rampX = w / 2 - 0.75;
-  const rampTilt = Math.atan2(stageH, rampLen);
-  return (
-    <group>
-      {/* palco elevado com cortinas */}
-      <B p={[0, stageH / 2, back + stageD / 2]} s={[9, stageH, stageD]} c="#4a2c18" />
-      <B p={[0, stageH - 0.02, back + stageD]} s={[9, 0.06, 0.06]} c="#111827" />
-      <Sign
-        lines={["EXPOTEC", "EEEP Dr. Salomão Alves de Moura"]}
-        p={[0, 1.65, back + 0.13]}
-        size={[5, 1.4]}
-        bg="#1e1b4b"
-        fg="#e9d5ff"
-        glow
-      />
-      {[-1, 1].map((side) => (
-        <group key={side}>
-          {[0, 1, 2, 3].map((k) => (
-            <B
-              key={k}
-              p={[side * (3.2 + k * 0.32), stageH + 1, back + 0.3 + (k % 2) * 0.06]}
-              s={[0.3, 2, 0.1]}
-              c={k % 2 ? "#7f1d1d" : "#6b0f1a"}
-            />
-          ))}
-        </group>
-      ))}
-      <B p={[0, 2.45, back + 0.3]} s={[9, 0.3, 0.14]} c="#6b0f1a" />
-      <B p={[2.5, stageH + 0.5, back + 1.4]} s={[0.6, 1, 0.45]} c={WOOD} />
-      {/* rampa lateral de acesso ao palco (8,33 %) */}
-      <B
-        p={[rampX, stageH / 2 - 0.03, back + stageD + rampLen / 2]}
-        s={[1, 0.08, Math.hypot(rampLen, stageH)]}
-        r={[rampTilt, 0, 0]}
-        c="#78716c"
-      />
-      <B
-        p={[rampX - 0.5, stageH / 2 + 0.9, back + stageD + rampLen / 2]}
-        s={[0.05, 0.05, Math.hypot(rampLen, stageH)]}
-        r={[rampTilt, 0, 0]}
-        c={RED}
-      />
-      {/* degraus da plateia (piso em rampa) */}
-      {rows.slice(1).map((z) => {
-        const h = (z - rows[0]!) * AUDIENCE_SLOPE;
-        return <B key={z} p={[0, h / 2, z + 0.1]} s={[7.6, h, 0.85]} c="#3f3a36" />;
-      })}
-      <SeatRows seats={seats} color="#111111" />
-      {[-4.8, 4.8].map((x) => (
-        <B key={x} p={[x, 0.9, back + 0.6]} s={[0.5, 1.3, 0.5]} c="#111827" />
-      ))}
-    </group>
-  );
-}
-
-/** Refeitório: mesas compridas com bancos integrados, zona de circulação e lavatório. */
+/** Refeitório amplo: balcão de distribuição, mesas retangulares enfileiradas e teto em estrutura metálica. */
 function Canteen({ room }: { room: Room }) {
   const { w, d, accent } = room;
   const back = -d / 2;
+  const columns = [-w / 2 + 1.6, -w / 2 + 4.4, w / 2 - 4.4, w / 2 - 1.6];
+  const rows = [-d / 2 + 2.6, d / 2 - 1.3];
   return (
     <group>
-      <B p={[0, 0.5, back + 0.8]} s={[6, 1, 0.7]} c="#d6d3d1" />
-      <B p={[0, 1.02, back + 0.8]} s={[6.1, 0.05, 0.8]} c="#94a3b8" />
-      {[-2.2, -1.1, 0, 1.1, 2.2].map((x, i) => (
+      {/* balcão de distribuição em inox */}
+      <B p={[0, 0.5, back + 0.8]} s={[8, 1, 0.7]} c="#d6d3d1" />
+      <B p={[0, 1.02, back + 0.8]} s={[8.1, 0.05, 0.8]} c="#94a3b8" />
+      {[-3.3, -2.2, -1.1, 0, 1.1, 2.2, 3.3].map((x, i) => (
         <mesh key={x} position={[x, 1.1, back + 0.8]}>
           <cylinderGeometry args={[0.28, 0.24, 0.14, 16]} />
           <meshStandardMaterial
-            color={["#fbbf24", "#78350f", "#16a34a", "#f97316", "#fef3c7"][i]!}
+            color={
+              ["#fbbf24", "#78350f", "#16a34a", "#f97316", "#fef3c7", "#b91c1c", "#fde68a"][i]!
+            }
           />
         </mesh>
       ))}
@@ -992,38 +1307,48 @@ function Canteen({ room }: { room: Room }) {
         bg="#1c1917"
         fg="#fde68a"
       />
-      {/* mesas compridas em colunas e fileiras */}
-      {[-2.1, 2.1].flatMap((x) =>
-        [-1.6, 0.45, 2.5].map((z) => (
+      {/* mesas retangulares enfileiradas com bancos */}
+      {columns.flatMap((x) =>
+        rows.map((z) => (
           <group key={`${x}:${z}`} position={[x, 0, z]}>
-            <B p={[0, 0.74, 0]} s={[2.4, 0.05, 0.75]} c="#f8fafc" />
+            <B p={[0, 0.74, 0]} s={[2.4, 0.05, 0.8]} c="#f8fafc" />
             <B p={[0, 0.37, 0]} s={[2.2, 0.06, 0.06]} c={METAL} />
             {[-1, 1].map((sx) => (
               <B key={sx} p={[sx * 1.05, 0.37, 0]} s={[0.06, 0.74, 1.4]} c={METAL} />
             ))}
-            {[-0.6, 0.6].map((bz) => (
+            {[-0.62, 0.62].map((bz) => (
               <B key={bz} p={[0, 0.45, bz]} s={[2.4, 0.06, 0.3]} c={accent} />
             ))}
-            {/* calha de iluminação pendente */}
-            <B p={[0, 2.45, 0]} s={[2, 0.03, 0.05]} c="#e5e7eb" e="#fffbeb" ei={0.9} />
           </group>
         )),
       )}
-      {/* zona de circulação marcada no piso */}
-      {[-0.75, 0.75].map((x) => (
-        <B key={x} p={[x, 0.03, 0.6]} s={[0.07, 0.01, 6.4]} c="#facc15" />
+      {/* teto em estrutura metálica: tesouras, terças e luminárias */}
+      {[-d / 2 + 1, 0, d / 2 - 1].map((z) => (
+        <Truss key={z} p={[0, WALL_H - 0.25, z]} length={w - 0.2} h={0.35} />
       ))}
-      <B p={[0, 0.03, back + 1.4]} s={[w - 0.6, 0.01, 0.07]} c="#facc15" />
-      <Sign
-        lines={["CIRCULAÇÃO"]}
-        p={[0, 0.035, 0.6]}
-        size={[1.8, 0.4]}
-        r={[-Math.PI / 2, 0, Math.PI / 2]}
-        bg={CERAMIC}
-        fg="#a16207"
-      />
+      <MetalRoof p={[0, WALL_H + 0.12, 0]} s={[w + 0.4, d + 0.4]} />
+      {[-w / 3, 0, w / 3].map((x) => (
+        <B key={x} p={[x, WALL_H - 0.05, 0]} s={[0.08, 0.08, d - 0.2]} c={TRUSS} />
+      ))}
+      {columns.flatMap((x) =>
+        rows.map((z) => (
+          <B
+            key={`l${x}:${z}`}
+            p={[x, WALL_H - 0.5, z]}
+            s={[1.6, 0.04, 0.12]}
+            c="#f8fafc"
+            e="#fffbeb"
+            ei={0.9}
+          />
+        )),
+      )}
+      {/* faixa de circulação central */}
+      {[-1.15, 1.15].map((x) => (
+        <B key={x} p={[x, 0.03, 0.8]} s={[0.07, 0.01, d - 2.2]} c="#facc15" />
+      ))}
+      <B p={[0, 0.03, back + 1.5]} s={[w - 0.6, 0.01, 0.07]} c="#facc15" />
       {/* lavatório na entrada */}
-      <group position={[w / 2 - 0.4, 0, d / 2 - 1.1]}>
+      <group position={[w / 2 - 0.4, 0, d / 2 - 1.3]}>
         <B p={[0, 0.42, 0]} s={[0.55, 0.84, 1.6]} c="#f1f5f9" />
         <B p={[0, 0.86, 0]} s={[0.6, 0.04, 1.65]} c="#cbd5e1" />
         {[-0.5, 0, 0.5].map((z) => (
@@ -1040,21 +1365,94 @@ function Canteen({ room }: { room: Room }) {
 
 const RoomBlock = memo(function RoomBlock({ room }: { room: Room }) {
   const angle = doorAngle[room.door];
+  const doorW = room.doorW ?? 1.7;
+  const front = room.d / 2 + 0.115;
+  const h = roomWallH(room);
+  const closed = room.walls !== false;
   return (
-    <group position={[room.x, 0, room.z]} rotation={[0, angle, 0]}>
+    <group position={[room.x, roomY(room), room.z]} rotation={[0, angle, 0]}>
       <B p={[0, 0.012, 0]} s={[room.w, 0.02, room.d]} c={room.floor} />
-      {room.walls !== false && (
-        <B p={[0, 0.016, room.d / 2 + 0.6]} s={[1.6, 0.02, 0.9]} c={room.accent} />
-      )}
       <Interior room={room} />
-      {room.walls !== false && (
-        <Sign
-          lines={[room.board ?? room.name]}
-          p={[0, WALL_H - 0.25, room.d / 2 + 0.115]}
-          size={[1.7, 0.36]}
-          bg={room.accent}
-          fg="#ffffff"
-        />
+      {closed && room.kind !== "canteen" && (
+        // forro branco (visto de baixo) com luminárias
+        <group>
+          <mesh position={[0, h - 0.01, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+            <planeGeometry args={[room.w, room.d]} />
+            <meshStandardMaterial color="#f5f5f4" roughness={0.95} />
+          </mesh>
+          {[-1, 1].map((side) => (
+            <B
+              key={side}
+              p={[side * room.w * 0.22, h - 0.04, 0]}
+              s={[0.25, 0.04, room.d * 0.6]}
+              c="#ffffff"
+              e="#fffbeb"
+              ei={1}
+            />
+          ))}
+        </group>
+      )}
+      {closed && (
+        <group>
+          <B p={[0, 0.016, room.d / 2 + 0.6]} s={[doorW, 0.02, 0.9]} c={room.accent} />
+          {room.reliefSign ? (
+            // letreiro em relevo vermelho
+            <Sign
+              lines={[room.name]}
+              p={[0, h - 0.4, front + 0.02]}
+              size={[3.2, 0.6]}
+              bg="transparent"
+              fg={RED}
+            />
+          ) : (
+            <Sign
+              lines={[room.name.toUpperCase()]}
+              p={[0, h - 0.3, front]}
+              size={[Math.max(1.8, doorW + 0.6), 0.38]}
+              bg={room.accent}
+              fg="#ffffff"
+            />
+          )}
+          {/* placa de identificação ao lado da porta */}
+          <B p={[doorW / 2 + 0.55, 1.65, front - 0.01]} s={[0.96, 0.34, 0.02]} c="#94a3b8" />
+          <Sign
+            lines={[room.name]}
+            p={[doorW / 2 + 0.55, 1.65, front + 0.005]}
+            size={[0.9, 0.28]}
+            bg="#f8fafc"
+            fg="#14532d"
+          />
+          {/* batentes */}
+          {[-1, 1].map((side) => (
+            <B
+              key={side}
+              p={[side * (doorW / 2), (h - 0.6) / 2, room.d / 2]}
+              s={[0.08, h - 0.6, 0.26]}
+              c={GREEN_DARK}
+            />
+          ))}
+          {room.glassDoor && (
+            // portas de vidro de correr, abertas
+            <group>
+              {[-1, 1].map((side) => (
+                <mesh
+                  key={side}
+                  position={[side * (doorW / 2 + doorW / 4), (h - 0.6) / 2, room.d / 2 + 0.16]}
+                >
+                  <boxGeometry args={[doorW / 2, h - 0.6, 0.03]} />
+                  <meshStandardMaterial
+                    color="#bfe3f5"
+                    transparent
+                    opacity={0.35}
+                    roughness={0.05}
+                    metalness={0.3}
+                  />
+                </mesh>
+              ))}
+              <B p={[0, h - 0.62, room.d / 2 + 0.16]} s={[doorW * 2, 0.06, 0.06]} c={METAL} />
+            </group>
+          )}
+        </group>
       )}
     </group>
   );
@@ -1064,52 +1462,42 @@ const RoomBlock = memo(function RoomBlock({ room }: { room: Room }) {
 /* Paredes (ficam transparentes quando tapam a visão)                  */
 /* ------------------------------------------------------------------ */
 
-function Walls({ posRef }: { posRef: { current: Vec2 } }) {
-  const materials = useRef<(MeshStandardMaterial | null)[]>([]);
-  // placas de 60 cm na fachada
-  const maps = useMemo(
-    () =>
-      walls.map((wall) => {
-        if (!wall.tex || typeof document === "undefined") return null;
-        const tex = new CanvasTexture(patternCanvas("tiles"));
-        tex.colorSpace = SRGBColorSpace;
-        tex.wrapS = RepeatWrapping;
-        tex.wrapT = RepeatWrapping;
-        tex.repeat.set(Math.max(wall.sx, wall.sz) / 1.2, WALL_H / 1.2);
-        return tex;
-      }),
-    [],
+/** Textura de parede compartilhada por repetição (azulejo a cada 1 m, fachada a cada 4 m). */
+function wallTexture(tex: Wall["tex"], len: number, h: number) {
+  if (!tex || tex === "mural" || typeof document === "undefined") return null;
+  const t = new CanvasTexture(patternCanvas(tex));
+  t.colorSpace = SRGBColorSpace;
+  t.wrapS = RepeatWrapping;
+  t.wrapT = RepeatWrapping;
+  const step = tex === "facade" ? 4 : tex === "tiles" ? 1.2 : 1;
+  t.repeat.set(
+    Math.max(1, Math.round(len / step)),
+    tex === "tiles" ? Math.max(1, Math.round(h / 1.2)) : 1,
   );
-  useEffect(() => () => maps.forEach((tex) => tex?.dispose()), [maps]);
-  useFrame(() => {
-    const p = posRef.current;
-    walls.forEach((wall, i) => {
-      const material = materials.current[i];
-      if (!material) return;
-      const blocks =
-        wall.axis === "x" &&
-        wall.z > p.z - 0.4 &&
-        wall.z < p.z + 9 &&
-        p.x > wall.x - wall.sx / 2 - 2.5 &&
-        p.x < wall.x + wall.sx / 2 + 2.5;
-      const target = blocks ? 0.18 : 1;
-      material.opacity += (target - material.opacity) * 0.15;
-      material.depthWrite = material.opacity > 0.95;
+  t.anisotropy = 4;
+  return t;
+}
+
+function Walls() {
+  const maps = useMemo(() => {
+    const cache = new Map<string, CanvasTexture | null>();
+    return walls.map((wall) => {
+      const len = Math.max(wall.sx, wall.sz);
+      const key = `${wall.tex}:${Math.round(len)}:${Math.round(wall.h)}`;
+      if (!cache.has(key)) cache.set(key, wallTexture(wall.tex, len, wall.h));
+      return cache.get(key) ?? null;
     });
-  });
+  }, []);
+  useEffect(() => () => new Set(maps).forEach((tex) => tex?.dispose()), [maps]);
   return (
     <group>
       {walls.map((wall, i) => (
-        <mesh key={i} position={[wall.x, WALL_H / 2, wall.z]}>
-          <boxGeometry args={[wall.sx, WALL_H, wall.sz]} />
+        <mesh key={i} position={[wall.x, wall.y0 + wall.h / 2, wall.z]} castShadow receiveShadow>
+          <boxGeometry args={[wall.sx, wall.h, wall.sz]} />
           <meshStandardMaterial
-            ref={(m) => {
-              materials.current[i] = m;
-            }}
             color={maps[i] ? "#ffffff" : wall.color}
             map={maps[i] ?? null}
-            roughness={0.85}
-            transparent
+            roughness={0.8}
           />
         </mesh>
       ))}
@@ -1304,128 +1692,692 @@ function PingPongTable({ x, z }: { x: number; z: number }) {
   );
 }
 
-/** Pátio coberto principal (área SAM): treliça vermelha, mural, rampa e pingue-pongue. */
-const PatioSam = memo(function PatioSam() {
-  const { x0, x1, z0, z1 } = patioSam;
+/** Raquete de tênis de mesa apoiada sobre a mesa. */
+function Paddle({ p, r = 0 }: { p: V3; r?: number }) {
+  return (
+    <group position={p} rotation={[-Math.PI / 2, 0, r]}>
+      <mesh>
+        <cylinderGeometry args={[0.08, 0.08, 0.015, 16]} />
+        <meshStandardMaterial color="#dc2626" />
+      </mesh>
+      <B p={[0, -0.12, 0]} s={[0.03, 0.1, 0.02]} c={WOOD} />
+    </group>
+  );
+}
+
+/** Espaço reservado para a logo da escola. Se existir `public/logo-eeep.png`, ela é aplicada. */
+function LogoSpace({ p, r, size }: { p: V3; r: V3; size: [number, number] }) {
+  const [logo, setLogo] = useState<Texture | null>(null);
+  useEffect(() => {
+    let alive = true;
+    let loaded: Texture | null = null;
+    new TextureLoader().load(
+      "/logo-eeep.png",
+      (tex) => {
+        tex.colorSpace = SRGBColorSpace;
+        loaded = tex;
+        if (alive) setLogo(tex);
+        else tex.dispose();
+      },
+      undefined,
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+      loaded?.dispose();
+    };
+  }, []);
+  return (
+    <group position={p} rotation={r}>
+      <B p={[0, 0, -0.02]} s={[size[0] + 0.24, size[1] + 0.24, 0.04]} c={GREEN} />
+      {logo ? (
+        <mesh position={[0, 0, 0.01]}>
+          <planeGeometry args={size} />
+          <meshStandardMaterial map={logo} transparent roughness={0.6} />
+        </mesh>
+      ) : (
+        <Sign
+          lines={["LOGO DA ESCOLA", "EEEP Dr. Salomão", "Alves de Moura"]}
+          p={[0, 0, 0.01]}
+          size={size}
+          bg="#f8fafc"
+          fg={GREEN_DARK}
+        />
+      )}
+    </group>
+  );
+}
+
+/** Pátio coberto da entrada: telhas metálicas, treliças vinho, mural, logo e acessos. */
+function EntranceHall() {
+  const { x0, x1, z0, z1 } = hall;
   const cx = (x0 + x1) / 2;
   const cz = (z0 + z1) / 2;
+  const roof = usePattern("roof", (x1 - x0) / 1, 1);
+  const hallFloor = usePattern("hallFloor");
   const mural = usePattern("mural");
-  const landing = 1.2;
-  const rise = 0.45;
-  const rampLen = rise / 0.0833;
-  const rampZ = z1 - 0.65;
-  const rampCx = x0 + landing + rampLen / 2;
-  const tilt = Math.atan2(rise, rampLen);
-  const roofY = 4.2;
+  // mural "SAM" na entrada da saída lateral: parede do lado do Auditório, logo ao entrar
+  const muralH = WALL_H - 0.1;
+  const muralW = muralH * 0.75;
+  const trussZ = [0.5, 4.6, 8, 11, 14];
+  const face = BLOCK_X - 0.115; // face das paredes dos blocos voltada para o pátio
   return (
     <group>
-      <Floor p={[cx, 0.014, cz]} s={[x1 - x0, z1 - z0]} pattern="waves" tile={2} />
-      {/* mural artístico na parede azul */}
+      <mesh position={[cx, 0.012, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[x1 - x0, z1 - z0]} />
+        <meshStandardMaterial map={hallFloor} roughness={0.9} />
+      </mesh>
+
+      {/* pilares estruturais vinho */}
+      {[-5.5, 5.5].map((x) => (
+        <group key={x}>
+          <B p={[x, ROOF_Y / 2, 11]} s={[0.4, ROOF_Y, 0.4]} c={RED} />
+          <B p={[x, 0.12, 11]} s={[0.6, 0.24, 0.6]} c={RED_DARK} />
+        </group>
+      ))}
+      {/* pilares junto às paredes (sem cobrir o mural, as portas e o letreiro) */}
+      {(
+        [
+          [-BLOCK_X + 0.3, 0.5],
+          [-BLOCK_X + 0.3, sideExit.z1 + 0.2],
+          [-BLOCK_X + 0.3, 14],
+          [BLOCK_X - 0.3, 4.3],
+          [BLOCK_X - 0.3, 14],
+        ] as const
+      ).map(([x, z]) => (
+        <B key={`s${x}:${z}`} p={[x, ROOF_Y / 2, z]} s={[0.36, ROOF_Y, 0.36]} c={RED} />
+      ))}
+      {/* treliças metálicas vermelhas aparentes, terças e telhas metálicas */}
+      {trussZ.map((z) => (
+        <Truss key={z} p={[cx, ROOF_Y, z]} length={x1 - x0} h={0.9} />
+      ))}
+      {[-8, -4, 0, 4, 8].map((x) => (
+        <B key={x} p={[x, ROOF_Y + 0.5, cz]} s={[0.1, 0.12, z1 - z0]} c={TRUSS} />
+      ))}
+      <mesh
+        position={[cx, ROOF_Y + 0.6, cz]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        castShadow
+        receiveShadow
+      >
+        <planeGeometry args={[x1 - x0 + 0.6, z1 - z0 + 0.6]} />
+        <meshStandardMaterial map={roof} metalness={0.5} roughness={0.45} side={DoubleSide} />
+      </mesh>
+      {/* calhas de luz penduradas */}
+      {[-6, 0, 6].flatMap((x) =>
+        [2.6, 9.5, 12.5].map((z) => (
+          <B
+            key={`${x}:${z}`}
+            p={[x, ROOF_Y - 0.9, z]}
+            s={[1.4, 0.05, 0.15]}
+            c="#f8fafc"
+            e="#fffbeb"
+            ei={0.8}
+          />
+        )),
+      )}
+
+      {/* lado esquerdo: logo, Auditório com ping-pong azul à frente e o mural "SAM" */}
+      <LogoSpace p={[-face, 1.9, 13.2]} r={[0, Math.PI / 2, 0]} size={[1.3, 1.1]} />
+      <PingPongTable x={-7.6} z={11} />
+      <Paddle p={[-7.4, 0.8, 10.2]} r={0.4} />
+      <Paddle p={[-7.9, 0.8, 11.9]} r={-0.6} />
+      {/* lado esquerdo, entre o Auditório e a Secretaria: saída lateral */}
+      <Floor
+        p={[(sideExit.x0 + sideExit.x1) / 2, 0.014, (sideExit.z0 + sideExit.z1) / 2]}
+        s={[sideExit.x1 - sideExit.x0, sideExit.z1 - sideExit.z0]}
+        pattern="ceramic"
+        tile={1.2}
+      />
+      <CorridorCeiling r={sideExit} y={WALL_H} axis="x" />
       {mural && (
-        <mesh position={[x0 + 0.01, 1.3, cz]} rotation={[0, Math.PI / 2, 0]}>
-          <planeGeometry args={[z1 - z0 - 0.2, 2.4]} />
+        <mesh
+          position={[sideExit.x1 - 0.2 - muralW / 2, muralH / 2, sideExit.z1 - 0.112]}
+          rotation={[0, Math.PI, 0]}
+        >
+          <planeGeometry args={[muralW, muralH]} />
           <meshStandardMaterial map={mural} roughness={0.8} />
         </mesh>
       )}
-      {/* rampa de acessibilidade (8,33 %) com lateral vinho e peitoril */}
-      <B p={[x0 + landing / 2, rise / 2, rampZ]} s={[landing, rise, 0.95]} c="#c9c6c0" />
-      <B p={[x0 + landing / 2, rise / 2, rampZ - 0.48]} s={[landing, rise, 0.02]} c={RED} />
-      <B
-        p={[rampCx, rise / 2 - 0.04, rampZ]}
-        s={[Math.hypot(rampLen, rise), 0.1, 0.95]}
-        r={[0, 0, -tilt]}
-        c="#c9c6c0"
+
+      {/* placa vermelha de setores sobre mureta branca, junto à parede ao lado da rampa */}
+      <group position={[muralWall.x - 0.55, 0, muralWall.z1 - 1.1]} rotation={[0, -Math.PI / 2, 0]}>
+        <B p={[0, 0.3, 0]} s={[1.6, 0.6, 0.6]} c="#f8fafc" />
+        <B p={[0, 0.62, 0]} s={[1.7, 0.05, 0.7]} c="#e7e5e4" />
+        <B p={[0, 1.25, -0.12]} s={[1.5, 1.2, 0.08]} r={[-0.08, 0, 0]} c={RED} />
+        <Sign
+          lines={[
+            "SETORES",
+            "Auditório · Biblioteca",
+            "Secretaria · Professores",
+            "Laboratórios · Sanitários",
+            "Rampa: 2º andar",
+          ]}
+          p={[0, 1.25, -0.07]}
+          size={[1.38, 1.08]}
+          r={[-0.08, 0, 0]}
+          bg={RED}
+          fg="#ffffff"
+        />
+      </group>
+
+      {/* lado direito: janela vertical e letreiro vertical da Biblioteca */}
+      <group position={[face, 0, 0]}>
+        <B p={[0, 1.5, 12.6]} s={[0.04, 2.7, 0.95]} c={GREEN_DARK} />
+        <mesh position={[-0.03, 1.5, 12.6]} rotation={[0, -Math.PI / 2, 0]}>
+          <planeGeometry args={[0.8, 2.55]} />
+          <meshStandardMaterial
+            color="#9fd0ea"
+            metalness={0.4}
+            roughness={0.08}
+            emissive="#1e3a5f"
+            emissiveIntensity={0.15}
+          />
+        </mesh>
+        <B p={[-0.02, 2.2, 11.3]} s={[0.04, 3.4, 0.62]} c={RED} />
+        <Sign
+          lines={["BIBLIOTECA"]}
+          p={[-0.05, 2.2, 11.3]}
+          size={[3.2, 0.52]}
+          r={[0, -Math.PI / 2, Math.PI / 2]}
+          bg={RED}
+          fg="#ffffff"
+        />
+      </group>
+
+      {/* vasos e bancos (centro livre para caminhar) */}
+      {[
+        [-3.6, 13.6],
+        [3.6, 13.6],
+        [-9.8, 13.6],
+        [9.8, 13.6],
+        [-9.6, 1],
+      ].map(([x, z], i) => (
+        <Pot key={i} x={x!} z={z!} pot={POT_COLORS[i % 3]!} c={i % 2 ? "#15803d" : "#22c55e"} />
+      ))}
+    </group>
+  );
+}
+
+const POT_COLORS = ["#b91c1c", "#eab308", "#7c4a26"];
+
+/** Sólido de rampa: perfil (comprimento × alturas inicial/final) extrudado na largura. */
+function RampSolid({
+  p,
+  r,
+  len,
+  width,
+  h0,
+  h1,
+  thick,
+  color,
+}: {
+  p: V3;
+  r: number;
+  len: number;
+  width: number;
+  h0: number;
+  h1: number;
+  /** espessura da laje; sem valor, o sólido vai até o chão */
+  thick?: number;
+  color: string;
+}) {
+  const geometry = useMemo(() => {
+    const shape = new Shape();
+    if (thick) {
+      shape.moveTo(0, h0 - thick);
+      shape.lineTo(len, h1 - thick);
+    } else {
+      shape.moveTo(0, 0);
+      shape.lineTo(len, 0);
+    }
+    shape.lineTo(len, h1);
+    shape.lineTo(0, h0);
+    shape.closePath();
+    return new ExtrudeGeometry(shape, { depth: width, bevelEnabled: false });
+  }, [len, width, h0, h1, thick]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return (
+    <mesh geometry={geometry} position={p} rotation={[0, r, 0]} castShadow receiveShadow>
+      <meshStandardMaterial color={color} roughness={0.85} />
+    </mesh>
+  );
+}
+
+/** Corrimão metálico duplo inclinado entre dois pontos (x, y, z). */
+function Handrail({ a, b }: { a: V3; b: V3 }) {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const dz = b[2] - a[2];
+  const len = Math.hypot(dx, dy, dz);
+  const flat = Math.hypot(dx, dz);
+  const yaw = Math.atan2(dx, dz);
+  const pitch = -Math.atan2(dy, flat);
+  const posts = Math.max(2, Math.round(flat / 1.5));
+  return (
+    <group>
+      {[0.92, 0.7].map((h) => (
+        <mesh
+          key={h}
+          position={[(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + h, (a[2] + b[2]) / 2]}
+          rotation={[pitch, yaw, 0, "YXZ"]}
+        >
+          <boxGeometry args={[0.05, 0.05, len]} />
+          <meshStandardMaterial color="#c0c4c8" metalness={0.8} roughness={0.25} />
+        </mesh>
+      ))}
+      {Array.from({ length: posts + 1 }, (_, i) => i / posts).map((t) => (
+        <B
+          key={t}
+          p={[a[0] + dx * t, a[1] + dy * t + 0.46, a[2] + dz * t]}
+          s={[0.04, 0.92, 0.04]}
+          c="#a8adb3"
+        />
+      ))}
+    </group>
+  );
+}
+
+/** Rampa de acessibilidade vermelho-vinho em ziguezague, com corrimãos e o brasão na frente. */
+const Ramp = memo(function Ramp() {
+  const { a, landing, b, top } = ramp;
+  const len = a.x1 - a.x0;
+  const emblem = usePattern("emblem");
+  const painting = usePattern("schoolPainting");
+  // quadro na face de baixo do 2º lance (voltada para o pátio), abaixo da altura do patamar
+  const paintW = 5;
+  const paintH = 1.25;
+  const paintX = (b.x0 + b.x1) / 2 + 0.2;
+  const paintY = 0.25 + paintH / 2;
+  return (
+    <group>
+      {/* pintura da escola embaixo da rampa, em moldura de madeira */}
+      <group position={[paintX, paintY, b.z0 - 0.03]} rotation={[0, Math.PI, 0]}>
+        <B p={[0, 0, -0.01]} s={[paintW + 0.2, paintH + 0.2, 0.05]} c={WOOD} />
+        {painting && (
+          <mesh position={[0, 0, 0.02]}>
+            <planeGeometry args={[paintW, paintH]} />
+            <meshStandardMaterial map={painting} roughness={0.75} />
+          </mesh>
+        )}
+      </group>
+      {/* 1º lance: começa voltado para o lado do Auditório e sobe para leste */}
+      <RampSolid
+        p={[a.x0, 0, a.z0]}
+        r={0}
+        len={len}
+        width={a.z1 - a.z0}
+        h0={0}
+        h1={LANDING_Y}
+        color={RED}
       />
+      {/* patamar intermediário */}
       <B
-        p={[rampCx, rise / 2 - 0.15, rampZ - 0.48]}
-        s={[Math.hypot(rampLen, rise), 0.3, 0.03]}
-        r={[0, 0, -tilt]}
+        p={[(landing.x0 + landing.x1) / 2, LANDING_Y / 2, (landing.z0 + landing.z1) / 2]}
+        s={[landing.x1 - landing.x0, LANDING_Y, landing.z1 - landing.z0]}
         c={RED}
       />
-      {[0.9, 0.45].map((h) => (
+      {/* 2º lance: volta para oeste até a plataforma superior */}
+      <RampSolid
+        p={[b.x1, 0, b.z1]}
+        r={Math.PI}
+        len={len}
+        width={b.z1 - b.z0}
+        h0={LANDING_Y}
+        h1={FLOOR2_Y}
+        color={RED_DARK}
+      />
+      <B
+        p={[(a.x0 + a.x1) / 2, LANDING_Y / 2, (b.z1 + a.z0) / 2]}
+        s={[len, LANDING_Y, a.z0 - b.z1]}
+        c={RED_DARK}
+      />
+      {/* plataforma superior (passa-se por baixo dela no térreo) */}
+      <B
+        p={[(top.x0 + top.x1) / 2, FLOOR2_Y - 0.15, (top.z0 + top.z1) / 2]}
+        s={[top.x1 - top.x0, 0.3, top.z1 - top.z0]}
+        c={RED}
+      />
+      {[2.3, 4.2].map((z) => (
         <B
-          key={h}
-          p={[rampCx, rise / 2 + h, rampZ - 0.46]}
-          s={[Math.hypot(rampLen, rise), 0.05, 0.05]}
-          r={[0, 0, -tilt]}
+          key={z}
+          p={[top.x1 - 0.18, (FLOOR2_Y - 0.3) / 2, z]}
+          s={[0.3, FLOOR2_Y - 0.3, 0.3]}
           c={RED}
         />
       ))}
-      {Array.from({ length: 6 }, (_, i) => x0 + landing + (rampLen * (i + 0.5)) / 6).map((x) => (
-        <B
-          key={x}
-          p={[x, rise - ((x - x0 - landing) / rampLen) * rise + 0.45, rampZ - 0.46]}
-          s={[0.04, 0.9, 0.04]}
-          c={RED}
-        />
-      ))}
-      <PingPongTable x={-7.7} z={14.3} />
-      <PingPongTable x={-5} z={14.3} />
-      {/* pé-direito alto com treliças metálicas vermelhas */}
-      {[x0 + 0.1, x1 - 0.1].flatMap((x) =>
-        [z0 + 0.15, z1 - 0.25].map((z) => (
-          <B key={`${x}:${z}`} p={[x, roofY / 2, z]} s={[0.3, roofY, 0.3]} c={RED} />
-        )),
+      {/* corrimãos metálicos */}
+      <Handrail a={[a.x0, 0, a.z1 - 0.06]} b={[a.x1, LANDING_Y, a.z1 - 0.06]} />
+      <Handrail a={[a.x0, 0, a.z0 + 0.06]} b={[a.x1, LANDING_Y, a.z0 + 0.06]} />
+      <Handrail
+        a={[landing.x0, LANDING_Y, landing.z1 - 0.06]}
+        b={[landing.x1 - 0.1, LANDING_Y, landing.z1 - 0.06]}
+      />
+      <Handrail
+        a={[landing.x1 - 0.1, LANDING_Y, landing.z1 - 0.06]}
+        b={[landing.x1 - 0.1, LANDING_Y, landing.z0 + 0.06]}
+      />
+      <Handrail a={[b.x1, LANDING_Y, b.z0 + 0.06]} b={[b.x0, FLOOR2_Y, b.z0 + 0.06]} />
+      <Handrail a={[b.x1, LANDING_Y, b.z1 - 0.06]} b={[b.x0, FLOOR2_Y, b.z1 - 0.06]} />
+      {/* brasão da escola na frente do patamar, voltado para a entrada */}
+      {emblem && (
+        <mesh position={[(landing.x0 + landing.x1) / 2, 0.8, landing.z1 + 0.012]}>
+          <planeGeometry args={[0.95, 1.2]} />
+          <meshStandardMaterial map={emblem} transparent alphaTest={0.1} />
+        </mesh>
       )}
-      {[z0 + 0.15, z0 + 2, z0 + 3.9, z1 - 0.25].map((z) => (
-        <Truss key={z} p={[cx, roofY, z]} length={x1 - x0} h={0.6} />
+    </group>
+  );
+});
+
+/** Guarda-corpo metálico vermelho-vinho (h = 1,10 m) sobre peitoril, ao longo de x ou z. */
+function GuardRail({
+  from,
+  to,
+  axis,
+  at,
+  y,
+}: {
+  from: number;
+  to: number;
+  axis: "x" | "z";
+  at: number;
+  y: number;
+}) {
+  const len = to - from;
+  const mid = (from + to) / 2;
+  const pos = (t: number, h: number): V3 => (axis === "x" ? [t, y + h, at] : [at, y + h, t]);
+  const size = (thick: number, h: number): V3 => (axis === "x" ? [len, h, thick] : [thick, h, len]);
+  const posts = Math.max(2, Math.round(len / 1.2));
+  return (
+    <group>
+      <B p={pos(mid, 0.25)} s={size(0.16, 0.5)} c={RED} />
+      <B p={pos(mid, GUARD_H)} s={size(0.08, 0.06)} c={RED} />
+      <B p={pos(mid, 0.8)} s={size(0.04, 0.04)} c={RED} />
+      {Array.from({ length: posts + 1 }, (_, i) => from + (len * i) / posts).map((t) => (
+        <B key={t} p={pos(t, 0.5 + (GUARD_H - 0.5) / 2)} s={[0.05, GUARD_H - 0.5, 0.05]} c={RED} />
       ))}
-      {[x0 + 0.1, cx, x1 - 0.1].map((x) => (
-        <B key={x} p={[x, roofY + 0.32, cz]} s={[0.1, 0.1, z1 - z0]} c={TRUSS} />
+    </group>
+  );
+}
+
+/** Passarela superior com guarda-corpo vinho e vista para o pátio. */
+const Bridge = memo(function Bridge() {
+  const { x0, x1, z0, z1 } = bridge;
+  const top = ramp.top;
+  return (
+    <group>
+      {/* laje e vigas laterais maciças em vermelho-vinho */}
+      <B p={[(x0 + x1) / 2, FLOOR2_Y - 0.2, (z0 + z1) / 2]} s={[x1 - x0, 0.4, z1 - z0]} c={RED} />
+      <B p={[(x0 + x1) / 2, FLOOR2_Y - 0.35, z0 - 0.05]} s={[x1 - x0, 0.7, 0.12]} c={RED} />
+      <B p={[(x0 + x1) / 2, FLOOR2_Y - 0.35, z1 + 0.05]} s={[x1 - x0, 0.7, 0.12]} c={RED} />
+      {/* início da passarela na parede branca à direita do mural */}
+      <B
+        p={[bridge.x0 - 0.02, (FLOOR2_Y + ROOF_Y) / 2, (z0 + z1) / 2]}
+        s={[0.06, ROOF_Y - FLOOR2_Y, z1 - z0]}
+        c="#f8fafc"
+      />
+      <Floor
+        p={[(x0 + x1) / 2, FLOOR2_Y + 0.008, (z0 + z1) / 2]}
+        s={[x1 - x0, z1 - z0]}
+        pattern="ceramic"
+        tile={1.2}
+      />
+      <Floor
+        p={[(top.x0 + top.x1) / 2, FLOOR2_Y + 0.008, (top.z0 + top.z1) / 2]}
+        s={[top.x1 - top.x0, top.z1 - top.z0]}
+        pattern="ceramic"
+        tile={1.2}
+      />
+      <GuardRail from={-PATIO_X} to={top.x1} axis="x" at={z0 - 0.07} y={FLOOR2_Y} />
+      <GuardRail from={x0} to={x1} axis="x" at={z1 + 0.07} y={FLOOR2_Y} />
+      <GuardRail from={z1} to={top.z1} axis="z" at={top.x0 - 0.07} y={FLOOR2_Y} />
+      <GuardRail from={top.z0} to={ramp.b.z0} axis="z" at={top.x1 + 0.07} y={FLOOR2_Y} />
+      <GuardRail from={top.x0} to={top.x1} axis="x" at={top.z1 + 0.07} y={FLOOR2_Y} />
+      <Sign
+        lines={["2º ANDAR · SALAS DE DESENVOLVIMENTO"]}
+        p={[-4.5, FLOOR2_Y - 0.22, z1 + 0.1]}
+        size={[4.6, 0.32]}
+        bg={RED_DARK}
+        fg="#ffffff"
+      />
+    </group>
+  );
+});
+
+/** Corredor aberto do 2º andar, laje das salas e laje do bloco do mural. */
+const UpperDeck = memo(function UpperDeck() {
+  const c = upperCorridor;
+  const r = upperRooms;
+  return (
+    <group>
+      <B
+        p={[(c.x0 + c.x1) / 2, FLOOR2_Y - 0.14, (c.z0 + c.z1) / 2]}
+        s={[c.x1 - c.x0, 0.28, c.z1 - c.z0]}
+        c="#e7e5e4"
+      />
+      <B
+        p={[(r.x0 + r.x1) / 2, FLOOR2_Y - 0.14, (r.z0 + r.z1) / 2]}
+        s={[r.x1 - r.x0, 0.28, r.z1 - r.z0]}
+        c="#e7e5e4"
+      />
+      {/* peitoril vinho na borda da laje voltada para o pátio central */}
+      <B
+        p={[c.x1 + 0.03, FLOOR2_Y - 0.25, (c.z0 + c.z1) / 2]}
+        s={[0.12, 0.55, c.z1 - c.z0]}
+        c={RED}
+      />
+      <Floor
+        p={[(c.x0 + c.x1) / 2, FLOOR2_Y + 0.008, (c.z0 + c.z1) / 2]}
+        s={[c.x1 - c.x0, c.z1 - c.z0]}
+        pattern="ceramic"
+        tile={1.2}
+      />
+      <GuardRail from={c.z0} to={c.z1} axis="z" at={c.x1 + 0.07} y={FLOOR2_Y} />
+      <GuardRail from={c.x0} to={c.x1} axis="x" at={c.z0 - 0.07} y={FLOOR2_Y} />
+      {/* laje de cobertura do corredor superior, com viga vinho na borda */}
+      <CorridorCeiling r={c} y={FLOOR2_Y + WALL_H2} />
+      <B
+        p={[c.x1, FLOOR2_Y + WALL_H2 + 0.1, (c.z0 + c.z1) / 2]}
+        s={[0.3, 0.3, c.z1 - c.z0]}
+        c={RED}
+      />
+      {/* forro do corredor térreo (face de baixo da laje do 2º andar) */}
+      <CorridorCeiling r={corridorWest} y={FLOOR2_Y - 0.28} />
+    </group>
+  );
+});
+
+/** Laje de teto branca e lisa com luminárias retangulares embutidas (vista de baixo). */
+function CorridorCeiling({ r, y, axis = "z" }: { r: Rect; y: number; axis?: "x" | "z" }) {
+  const cx = (r.x0 + r.x1) / 2;
+  const cz = (r.z0 + r.z1) / 2;
+  const len = axis === "z" ? r.z1 - r.z0 : r.x1 - r.x0;
+  const lights = Math.max(1, Math.floor(len / 3));
+  return (
+    <group>
+      <B p={[cx, y + 0.08, cz]} s={[r.x1 - r.x0 + 0.1, 0.16, r.z1 - r.z0 + 0.1]} c="#f8fafc" />
+      {Array.from({ length: lights }, (_, i) => (len * (i + 0.5)) / lights).map((t) => (
+        <B
+          key={t}
+          p={axis === "z" ? [cx, y - 0.005, r.z0 + t] : [r.x0 + t, y - 0.005, cz]}
+          s={axis === "z" ? [0.6, 0.02, 1.2] : [1.2, 0.02, 0.6]}
+          c="#ffffff"
+          e="#fffbeb"
+          ei={1}
+        />
+      ))}
+    </group>
+  );
+}
+
+/** Canteiro de alvenaria (branco com borda vinho), com terra e arbustos. */
+function Planter({
+  x,
+  z,
+  w,
+  d,
+  tree,
+}: {
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  tree?: number;
+}) {
+  return (
+    <group position={[x, 0, z]}>
+      <B p={[0, 0.25, 0]} s={[w, 0.5, d]} c="#f5f5f4" />
+      <B p={[0, 0.52, 0]} s={[w + 0.08, 0.06, d + 0.08]} c={RED} />
+      <B p={[0, 0.5, 0]} s={[w - 0.3, 0.04, d - 0.3]} c="#5b3a1e" />
+      {[-1, 1].map((side) => (
+        <Shrub key={side} x={side * (w / 2 - 0.6)} z={0} s={0.8} />
+      ))}
+      {tree && <Tree x={0} z={0} s={tree} />}
+    </group>
+  );
+}
+
+/** Pátio central descoberto e arborizado, corredores térreos com pilares e peitoris vinho. */
+const Courtyard = memo(function Courtyard() {
+  const c = courtyard;
+  const e = courtyardEast;
+  return (
+    <group>
+      <Floor
+        p={[(c.x0 + c.x1) / 2, 0.012, (c.z0 + c.z1) / 2]}
+        s={[c.x1 - c.x0, c.z1 - c.z0]}
+        pattern="pavers"
+        tile={4}
+      />
+      <Floor
+        p={[(e.x0 + e.x1) / 2, 0.012, (e.z0 + e.z1) / 2]}
+        s={[e.x1 - e.x0, e.z1 - e.z0]}
+        pattern="pavers"
+        tile={4}
+      />
+      {[corridorWest, corridorEast].map((r, i) => (
+        <Floor
+          key={i}
+          p={[(r.x0 + r.x1) / 2, 0.014, (r.z0 + r.z1) / 2]}
+          s={[r.x1 - r.x0, r.z1 - r.z0]}
+          pattern="ceramic"
+          tile={1.2}
+        />
+      ))}
+      {/* passeio do fundo até o refeitório e a quadra */}
+      <Floor p={[0, 0.012, BACK_Z - 0.5]} s={[2 * OUTER_X, 1]} pattern="pavers" tile={4} />
+
+      {/* peitoris vinho com capa de concreto */}
+      {parapets.map((m, i) => (
+        <group key={i}>
+          <B p={[m.x, PARAPET_H / 2, m.z]} s={[m.sx, PARAPET_H, m.sz]} c={RED} />
+          <B p={[m.x, PARAPET_H + 0.03, m.z]} s={[m.sx + 0.06, 0.06, m.sz + 0.06]} c="#e7e5e4" />
+        </group>
+      ))}
+      {/* pilares vinho: os da esquerda sustentam o corredor do 2º andar */}
+      {PILLAR_Z_WEST.map((z) => (
+        <B
+          key={`w${z}`}
+          p={[-PATIO_X, (FLOOR2_Y + WALL_H2) / 2, z]}
+          s={[0.34, FLOOR2_Y + WALL_H2, 0.34]}
+          c={RED}
+        />
+      ))}
+      {PILLAR_Z_EAST.map((z) => (
+        <B key={`e${z}`} p={[PATIO_X, 1.6, z]} s={[0.34, 3.2, 0.34]} c={RED} />
+      ))}
+      {/* cobertura do corredor direito: laje leve sobre treliça */}
+      <Truss
+        p={[PATIO_X, 3.2, (corridorEast.z0 + corridorEast.z1) / 2]}
+        length={corridorEast.z1 - corridorEast.z0}
+        h={0.35}
+        r={Math.PI / 2}
+      />
+      <CorridorCeiling r={{ ...corridorEast, x1: BLOCK_X + 0.1 }} y={3.4} />
+
+      {/* canteiros de alvenaria com árvores, vasos e bancos no meio do pátio */}
+      <Planter x={-4} z={-3.4} w={4} d={2.4} tree={1.3} />
+      <Planter x={4} z={-3.4} w={4} d={2.4} tree={1.2} />
+      <Planter x={-4} z={-11} w={4} d={2.8} tree={1.6} />
+      <Planter x={4} z={-11} w={4} d={2.8} tree={1.5} />
+      <Planter x={-4} z={-17.6} w={4} d={2.4} tree={1.4} />
+      <Planter x={4} z={-17.6} w={4} d={2.4} tree={1.6} />
+      <Planter x={14.5} z={-19.2} w={5} d={2.4} tree={1.7} />
+      {[
+        [-1.8, -1.2],
+        [1.8, -1.2],
+        [-1.8, -7.2],
+        [1.8, -7.2],
+        [-1.8, -14.4],
+        [1.8, -14.4],
+        [-6.6, -7.2],
+        [6.6, -7.2],
+        [-1.8, -20.4],
+        [1.8, -20.4],
+        [10.4, -18.2],
+        [17.6, -20.4],
+      ].map(([x, z], i) => (
+        <Pot
+          key={i}
+          x={x!}
+          z={z!}
+          pot={POT_COLORS[i % 3]!}
+          c={i % 3 === 0 ? "#22c55e" : i % 3 === 1 ? "#15803d" : "#4d7c0f"}
+        />
+      ))}
+      {[
+        [-4, -7.2, 0],
+        [4, -7.2, 0],
+        [-4, -14.4, Math.PI],
+        [4, -14.4, Math.PI],
+      ].map(([x, z, r]) => (
+        <Bench key={`${x}:${z}`} x={x!} z={z!} r={r!} />
       ))}
     </group>
   );
 });
 
-/** Fachada principal: faixa alta em placas cinza ardósia, letreiro metálico e emblema. */
-function Facade({ posRef }: { posRef: { current: Vec2 } }) {
-  const x0 = patioSam.x0;
-  const x1 = 9;
-  const bandH = 1.6;
-  const band = usePattern("tiles", (x1 - x0) / 1.2, bandH / 1.2);
-  const emblem = usePattern("emblem");
+/** Fachada principal em placas quadradas cinza ardósia, letreiro prateado e entrada verde e branca. */
+function Facade() {
   const z = FACADE_Z;
+  const bandH = ROOF_Y + 1.1 - WALL_H;
+  const band = usePattern("tiles", (2 * OUTER_X) / 1.2, bandH / 1.2);
   return (
     <group>
-      <FadeGroup posRef={posRef} x0={x0} x1={x1} z={z}>
-        <mesh position={[(x0 + x1) / 2, WALL_H + bandH / 2, z]}>
-          <boxGeometry args={[x1 - x0, bandH, 0.3]} />
-          <meshStandardMaterial map={band} roughness={0.85} />
-        </mesh>
-        <Sign
-          lines={["ESCOLA ESTADUAL DE EDUCAÇÃO PROFISSIONAL", "DR. SALOMÃO ALVES DE MOURA"]}
-          p={[0, WALL_H + bandH / 2, z + 0.16]}
-          size={[11, 1.35]}
-          bg="transparent"
-          fg="#e5e7eb"
-        />
-      </FadeGroup>
-      {/* pilares da entrada */}
-      {[-3.25, 3.25].map((x) => (
-        <B key={x} p={[x, WALL_H / 2, z]} s={[0.4, WALL_H, 0.4]} c={FACADE_COLOR} />
-      ))}
-      {/* emblema do Governo do Estado ao lado da entrada */}
-      {emblem && (
-        <mesh position={[-4.3, 1.55, z + 0.12]}>
-          <planeGeometry args={[0.8, 1]} />
-          <meshStandardMaterial map={emblem} transparent alphaTest={0.1} />
-        </mesh>
-      )}
+      <mesh position={[0, WALL_H + bandH / 2, z]} castShadow receiveShadow>
+        <boxGeometry args={[2 * OUTER_X, bandH, 0.3]} />
+        <meshStandardMaterial map={band} color="#ffffff" roughness={0.9} />
+      </mesh>
+      {/* letreiro em relevo prateado */}
       <Sign
-        lines={["GOVERNO DO ESTADO", "DO CEARÁ"]}
-        p={[-4.3, 0.78, z + 0.12]}
-        size={[1.4, 0.42]}
+        lines={["ESCOLA ESTADUAL DE EDUCAÇÃO PROFISSIONAL", "DR. SALOMÃO ALVES DE MOURA"]}
+        p={[0, WALL_H + bandH * 0.5, z + 0.17]}
+        size={[15, 2]}
         bg="transparent"
         fg="#e5e7eb"
       />
-      <Sign
-        lines={["PORTARIA · ENTRADA"]}
-        p={[0, 2.35, z + 0.05]}
-        size={[2.6, 0.4]}
-        bg={RED}
-        fg="#f8fafc"
-      />
-      <B p={[0, 2.35, z]} s={[6.1, 0.4, 0.08]} c={RED_DARK} />
+      <B p={[0, WALL_H + bandH + 0.06, z]} s={[2 * OUTER_X + 0.2, 0.12, 0.4]} c="#2a2d30" />
+      {/* detalhes verde e branco da entrada */}
+      {[-ENTRANCE_HALF - 0.2, ENTRANCE_HALF + 0.2].map((x) => (
+        <group key={x}>
+          <B p={[x, WALL_H / 2, z + 0.1]} s={[0.4, WALL_H, 0.4]} c={GREEN} />
+          <B p={[x, WALL_H / 2, z + 0.31]} s={[0.12, WALL_H, 0.04]} c="#ffffff" />
+        </group>
+      ))}
+      <B p={[0, WALL_H - 0.3, z]} s={[ENTRANCE_HALF * 2, 0.6, 0.12]} c={GREEN} />
+      <B p={[0, WALL_H + 0.02, z + 0.06]} s={[ENTRANCE_HALF * 2 + 0.8, 0.08, 0.14]} c="#ffffff" />
+      {[1, -1].map((side) => (
+        <Sign
+          key={side}
+          lines={["ENTRADA"]}
+          p={[0, WALL_H - 0.3, z + side * 0.07]}
+          size={[2.2, 0.42]}
+          r={[0, side === 1 ? 0 : Math.PI, 0]}
+          bg={GREEN}
+          fg="#ffffff"
+        />
+      ))}
     </group>
   );
 }
@@ -1487,247 +2439,95 @@ function FlowerBed({ x, z, w, d }: { x: number; z: number; w: number; d: number 
   );
 }
 
-const Corridors = memo(function Corridors() {
-  const extraPillars = useMemo(() => {
-    const list: [number, number][] = [...pillars];
-    for (const m of muretas) {
-      const len = m.axis === "x" ? m.sx : m.sz;
-      const n = Math.floor(len / 3.5);
-      for (let i = 1; i < n; i += 1) {
-        const t = -len / 2 + (len / n) * i;
-        list.push(m.axis === "x" ? [m.x + t, m.z] : [m.x, m.z + t]);
-      }
-    }
-    return list;
-  }, []);
-  return (
-    <group>
-      {corridors.map((c, i) => (
-        <group key={i}>
-          <B
-            p={[(c.x0 + c.x1) / 2, 0.008, (c.z0 + c.z1) / 2]}
-            s={[c.x1 - c.x0, 0.02, c.z1 - c.z0]}
-            c={CERAMIC}
-          />
-        </group>
-      ))}
-      {/* peitoris vermelho-vinho com capa de concreto */}
-      {muretas.map((m, i) => (
-        <group key={i}>
-          <B p={[m.x, MURETA_HEIGHT / 2, m.z]} s={[m.sx, MURETA_HEIGHT, m.sz]} c={m.color} />
-          <B
-            p={[m.x, MURETA_HEIGHT + 0.03, m.z]}
-            s={[m.sx + 0.06, 0.06, m.sz + 0.06]}
-            c="#d8d2c8"
-          />
-        </group>
-      ))}
-      {/* pilares estruturais robustos */}
-      {extraPillars.map(([x, z], i) => (
-        <B key={i} p={[x, 1.55, z]} s={[0.34, 3.1, 0.34]} c={RED} />
-      ))}
-      {/* treliças metálicas vermelhas da cobertura dos corredores */}
-      <Truss p={[0, 3.2, 9.5]} length={22.3} h={0.35} />
-      <Truss p={[0, 3.2, -12]} length={22.3} h={0.35} />
-      <Truss p={[-11, 3.2, -1.25]} length={21.8} h={0.35} r={Math.PI / 2} />
-      <Truss p={[11, 3.2, -1.25]} length={21.8} h={0.35} r={Math.PI / 2} />
-      {[
-        [-12.3, 10.8],
-        [12.3, 10.8],
-        [-12.3, -13.3],
-        [12.3, -13.3],
-        [-2.4, 13],
-        [2.4, 13],
-        [-11.6, 4],
-        [-11.6, -7.5],
-        [11.6, 4],
-        [11.6, -7.5],
-        [-9.5, -13.6],
-        [9.5, -13.6],
-      ].map(([x, z], i) => (
-        <Pot
-          key={i}
-          x={x!}
-          z={z!}
-          c={i % 3 === 0 ? "#22c55e" : i % 3 === 1 ? "#15803d" : "#4d7c0f"}
-          pot={i % 2 ? "#eab308" : "#b91c1c"}
-        />
-      ))}
-    </group>
-  );
-});
-
-const Garden = memo(function Garden() {
-  const cx = (courtyard.x0 + courtyard.x1) / 2;
-  const cz = (courtyard.z0 + courtyard.z1) / 2;
-  return (
-    <group>
-      {/* pátio central descoberto: intertravado cinza em ziguezague */}
-      <Floor
-        p={[cx, 0.012, cz]}
-        s={[courtyard.x1 - courtyard.x0, courtyard.z1 - courtyard.z0]}
-        pattern="pavers"
-      />
-      {/* faixas de mosaico cerâmico bege */}
-      <Floor p={[0, 0.018, cz]} s={[2.8, courtyard.z1 - courtyard.z0]} pattern="mosaic" />
-      <Floor p={[cx, 0.02, -1.6]} s={[courtyard.x1 - courtyard.x0, 2]} pattern="mosaic" />
-      <Floor p={[-7, 0.018, -6.5]} s={[2, 11]} pattern="mosaic" />
-      <Floor p={[7, 0.018, -6.5]} s={[2, 11]} pattern="mosaic" />
-      {/* praça central: área de vivência com canteiro central */}
-      <mesh position={[0, 0.03, -1.6]}>
-        <cylinderGeometry args={[3.3, 3.3, 0.04, 40]} />
-        <meshStandardMaterial color={MOSAIC} />
-      </mesh>
-      <mesh position={[0, 0.2, -1.6]}>
-        <cylinderGeometry args={[1.1, 1.15, 0.4, 24]} />
-        <meshStandardMaterial color={RED_DARK} />
-      </mesh>
-      <mesh position={[0, 0.41, -1.6]}>
-        <cylinderGeometry args={[0.98, 0.98, 0.04, 24]} />
-        <meshStandardMaterial color="#5b3a1e" />
-      </mesh>
-      {[0, 1, 2, 3, 4].map((i) => {
-        const a = (i / 5) * Math.PI * 2;
-        return (
-          <mesh
-            key={i}
-            position={[Math.sin(a) * 0.55, 0.65, -1.6 + Math.cos(a) * 0.55]}
-            scale={[1, 0.8, 1]}
-          >
-            <icosahedronGeometry args={[0.35, 0]} />
-            <meshStandardMaterial color={i % 2 ? "#2f7d32" : "#3f9b3a"} flatShading />
-          </mesh>
-        );
-      })}
-      <FanPalm x={0} z={-1.6} y={0.4} s={0.9} />
-      {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
-        const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-        return (
-          <Pot
-            key={i}
-            x={Math.sin(a) * 1.75}
-            z={-1.6 + Math.cos(a) * 1.75}
-            pot={i % 2 ? "#eab308" : "#b91c1c"}
-            c={i % 2 ? "#15803d" : "#22c55e"}
-          />
-        );
-      })}
-      <Sign
-        lines={["ÁREA DE VIVÊNCIA"]}
-        p={[0, 0.06, 0.95]}
-        size={[2.8, 0.5]}
-        r={[-Math.PI / 2, 0, 0]}
-        bg={MOSAIC}
-        fg={RED}
-      />
-      {[
-        [-4, 4, 4.6, 3.4],
-        [4, 4, 4.6, 3.4],
-        [-4, -7.5, 4.6, 3],
-        [4, -7.5, 4.6, 3],
-      ].map(([x, z, w, d]) => (
-        <FlowerBed key={`${x}:${z}`} x={x!} z={z!} w={w!} d={d!} />
-      ))}
-      {[
-        [-9, 6.8],
-        [9, 6.8],
-        [-9.2, -9.8],
-        [9.2, -9.8],
-      ].map(([x, z]) => (
-        <Tree key={`${x}:${z}`} x={x!} z={z!} s={0.95} />
-      ))}
-      <Palm x={-4.2} z={1.2} />
-      <Palm x={4.2} z={-4.4} />
-      {[
-        [-2.4, 1.6, 0],
-        [2.4, 1.6, 0],
-        [-2.4, -4.8, Math.PI],
-        [2.4, -4.8, Math.PI],
-        [-9.5, -1.6, Math.PI / 2],
-        [9.5, -1.6, -Math.PI / 2],
-      ].map(([x, z, r]) => (
-        <Bench key={`${x}:${z}`} x={x!} z={z!} r={r!} />
-      ))}
-    </group>
-  );
-});
-
+/** Jardim frontal: arbustos e pequenas palmeiras dos dois lados do caminho de pedras. */
 const FRONT_GARDEN: [number, number, "palm" | "shrub"][] = [
-  [-4.6, 19.3, "shrub"],
-  [-6.2, 19.4, "palm"],
-  [-8, 19.3, "shrub"],
-  [-9.6, 19.5, "palm"],
-  [4.2, 19.3, "shrub"],
-  [5.8, 19.4, "palm"],
-  [7.6, 19.3, "shrub"],
-  [-3.4, 22, "shrub"],
-  [3.6, 21, "palm"],
-  [-4.2, 25.5, "palm"],
-  [-2.4, 26.6, "shrub"],
-  [-2.8, 27.8, "shrub"],
-  [6.5, 15, "palm"],
+  [-3.8, 15.2, "shrub"],
+  [-5.6, 15.5, "palm"],
+  [-7.6, 15.2, "shrub"],
+  [-10, 15.6, "palm"],
+  [-12.6, 15.2, "shrub"],
+  [-15.4, 15.6, "palm"],
+  [3.8, 15.2, "shrub"],
+  [5.6, 15.5, "palm"],
+  [7.6, 15.2, "shrub"],
+  [10, 15.6, "palm"],
+  [12.6, 15.2, "shrub"],
+  [15.4, 15.6, "palm"],
+  [-3.4, 17.4, "shrub"],
+  [3.4, 17.6, "palm"],
+  [-3.6, 20.4, "palm"],
+  [3.2, 21.4, "shrub"],
 ];
 
-const Grounds = memo(function Grounds({ posRef }: { posRef: { current: Vec2 } }) {
+const Grounds = memo(function Grounds() {
   return (
     <group>
-      <B p={[0, -0.06, -6]} s={[64, 0.1, 88]} c="#8cbf5f" />
-      {/* caminhos externos */}
-      <StonePath from={{ x: 0, z: 28.8 }} to={{ x: 0, z: 18.3 }} />
-      <Floor p={[7, 0.005, -20.25]} s={[2, 12.5]} pattern="pavers" />
-      <Floor p={[-7, 0.005, -20.25]} s={[2, 12.5]} pattern="pavers" />
-      {/* jardim frontal tropical */}
+      <mesh position={[0, -0.01, -6]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[60, 80]} />
+        <meshStandardMaterial color="#86b95a" roughness={1} />
+      </mesh>
+      {/* caminho frontal de pedras */}
+      <StonePath from={{ x: 0, z: 22.3 }} to={{ x: 0, z: FACADE_Z + 0.2 }} width={2.2} />
       {FRONT_GARDEN.map(([x, z, kind]) =>
         kind === "palm" ? (
           <FanPalm key={`${x}:${z}`} x={x} z={z} />
         ) : (
-          <Shrub key={`${x}:${z}`} x={x} z={z} s={1.1} />
+          <Shrub key={`${x}:${z}`} x={x} z={z} s={1.05} />
         ),
       )}
-      <FlowerBed x={6.2} z={15} w={4.2} d={3.4} />
-      <Corridors />
-      <Garden />
-      <PatioSam />
-      <Facade posRef={posRef} />
-      {/* árvores externas */}
+      <FlowerBed x={-9} z={19} w={3.2} d={2} />
+      <FlowerBed x={10} z={19.4} w={3.2} d={2} />
+      <EntranceHall />
+      <Ramp />
+      <Courtyard />
+      <Facade />
+      <Palm x={-16.5} z={19.5} />
+      <Palm x={16.5} z={19.5} />
       {[
-        [-21, 22],
-        [21, 22],
-        [-21, 12],
-        [21, 12],
-        [-22, -20],
-        [22, -20],
-        [-20, -38],
-        [20, -38],
-        [-14, 24],
-        [14, 24],
+        [-17.5, -32],
+        [-9, -32],
+        [-0.5, -31],
+        [19, -34],
+        [-19, 10],
+        [19, 5],
       ].map(([x, z]) => (
-        <Tree key={`o${x}:${z}`} x={x!} z={z!} s={1.2} />
+        <Tree key={`o${x}:${z}`} x={x!} z={z!} s={1.25} />
       ))}
-      {/* muro */}
-      <B p={[-13.25, 0.6, 29]} s={[21.5, 1.2, 0.25]} c="#e7e5e4" />
-      {/* grade metálica verde-escura na lateral direita */}
-      <Fence x0={2.9} x1={24} z={29} />
-      <B p={[0, 0.6, -41]} s={[48, 1.2, 0.25]} c="#e7e5e4" />
-      <B p={[-24, 0.6, -6]} s={[0.25, 1.2, 70]} c="#e7e5e4" />
-      <B p={[24, 0.6, -6]} s={[0.25, 1.2, 70]} c="#e7e5e4" />
-      {/* portão de entrada */}
-      <B p={[-2.6, 1.8, 29]} s={[0.5, 3.6, 0.5]} c={FACADE_COLOR} />
-      <B p={[2.6, 1.8, 29]} s={[0.5, 3.6, 0.5]} c={FACADE_COLOR} />
-      <B p={[0, 3.8, 29]} s={[5.8, 0.9, 0.3]} c={FACADE_COLOR} />
-      <Sign
-        lines={["EEEP DR. SALOMÃO ALVES DE MOURA", "ARACOIABA · CE"]}
-        p={[0, 3.8, 29.16]}
-        size={[5.6, 0.8]}
-        bg={FACADE_COLOR}
-        fg="#e5e7eb"
-      />
+      {/* grade metálica verde-escura na frente */}
+      <Fence x0={-20} x1={-2.4} z={22.5} />
+      <Fence x0={2.4} x1={20} z={22.5} />
+      {/* muro branco com faixa verde nas laterais e no fundo */}
+      {[
+        [0, -35, 40, 0.25],
+        [-20, -6.25, 0.25, 57.5],
+        [20, -6.25, 0.25, 57.5],
+      ].map(([x, z, sx, sz]) => (
+        <group key={`${x}:${z}`}>
+          <B p={[x!, 0.9, z!]} s={[sx!, 1.8, sz!]} c="#f5f5f4" />
+          <B p={[x!, 1.85, z!]} s={[sx! + 0.05, 0.1, sz! + 0.05]} c={GREEN} />
+        </group>
+      ))}
+      {/* portão */}
+      <B p={[-2.4, 1.8, 22.5]} s={[0.5, 3.6, 0.5]} c={GREEN} />
+      <B p={[2.4, 1.8, 22.5]} s={[0.5, 3.6, 0.5]} c={GREEN} />
+      <B p={[0, 3.8, 22.5]} s={[5.4, 0.9, 0.3]} c="#f8fafc" />
+      {[1, -1].map((side) => (
+        <Sign
+          key={side}
+          lines={["EEEP DR. SALOMÃO ALVES DE MOURA", "ARACOIABA · CE"]}
+          p={[0, 3.8, 22.5 + side * 0.16]}
+          size={[5.2, 0.8]}
+          r={[0, side === 1 ? 0 : Math.PI, 0]}
+          bg="#f8fafc"
+          fg={GREEN_DARK}
+        />
+      ))}
       {/* mastros */}
       {[
-        [4.5, "#16a34a", "#facc15"],
-        [5.5, "#15803d", "#f8fafc"],
+        [5.5, "#16a34a", "#facc15"],
+        [6.5, "#15803d", "#f8fafc"],
       ].map(([x, a, b]) => (
-        <group key={String(x)} position={[x as number, 0, 25]}>
+        <group key={String(x)} position={[x as number, 0, 19.5]}>
           <B p={[0, 2.5, 0]} s={[0.08, 5, 0.08]} c="#cbd5e1" />
           <B p={[0.4, 4.5, 0]} s={[0.8, 0.5, 0.02]} c={a as string} />
           <B p={[0.4, 4.5, 0.015]} s={[0.35, 0.22, 0.01]} c={b as string} r={[0, 0, Math.PI / 4]} />
@@ -1736,6 +2536,22 @@ const Grounds = memo(function Grounds({ posRef }: { posRef: { current: Vec2 } })
     </group>
   );
 });
+
+/** 2º andar: salas de DS, corredor aberto, passarela e plataforma da rampa. */
+function UpperFloor({ children }: { children?: ReactNode }) {
+  return (
+    <group>
+      <UpperDeck />
+      {rooms
+        .filter((room) => roomLevel(room) === 1)
+        .map((room) => (
+          <RoomBlock key={room.id} room={room} />
+        ))}
+      <Bridge />
+      {children}
+    </group>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Trilha, marcadores e itens                                          */
@@ -1746,13 +2562,12 @@ function Marker({ room, state }: { room: Room; state: "next" | "todo" | "done" }
   useFrame(({ clock }) => {
     if (!ref.current) return;
     ref.current.rotation.y = clock.elapsedTime * 1.6;
-    ref.current.position.y =
-      (room.walls === false ? 4 : 3.3) + Math.sin(clock.elapsedTime * 2.5) * 0.12;
+    ref.current.position.y = roomWallH(room) + 0.5 + Math.sin(clock.elapsedTime * 2.5) * 0.12;
   });
-  const [x, z] = room.walls === false ? [room.x, room.z] : toWorld(room, 0, room.d / 2 + 0.3);
+  const [x, z] = toWorld(room, 0, room.d / 2 + 0.3);
   const color = state === "done" ? "#22c55e" : state === "next" ? "#facc15" : "#a78bfa";
   return (
-    <group position={[x, 0, z]}>
+    <group position={[x, roomY(room), z]}>
       <group ref={ref}>
         <mesh scale={state === "next" ? 1.5 : 1}>
           {state === "done" ? (
@@ -1763,7 +2578,7 @@ function Marker({ room, state }: { room: Room; state: "next" | "todo" | "done" }
           <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.2} />
         </mesh>
       </group>
-      {state === "next" && room.walls !== false && (
+      {state === "next" && (
         <mesh
           position={[
             ...(() => {
@@ -1828,7 +2643,7 @@ function ItemMesh({ item }: { item: CollectItem }) {
   }
 }
 
-function Collectible({ x, z, item }: { x: number; z: number; item: CollectItem }) {
+function Collectible({ x, y, z, item }: { x: number; y: number; z: number; item: CollectItem }) {
   const ref = useRef<Group>(null);
   useFrame(({ clock }) => {
     if (!ref.current) return;
@@ -1836,7 +2651,7 @@ function Collectible({ x, z, item }: { x: number; z: number; item: CollectItem }
     ref.current.position.y = 1.15 + Math.sin(clock.elapsedTime * 3) * 0.1;
   });
   return (
-    <group position={[x, 0, z]}>
+    <group position={[x, y, z]}>
       <group ref={ref}>
         <ItemMesh item={item} />
       </group>
@@ -1856,10 +2671,41 @@ function Collectible({ x, z, item }: { x: number; z: number; item: CollectItem }
 /* Jogador                                                             */
 /* ------------------------------------------------------------------ */
 
-export type CollectTarget = { missionId: string; x: number; z: number };
+/** Para onde a seta-guia aponta: a porta da sala ou, se ela fica em outro andar, a rampa. */
+function routeTarget(x: number, z: number, floor: number, room: Room): [number, number] {
+  const { a, landing, b, top } = ramp;
+  const midA = (a.z0 + a.z1) / 2;
+  const midB = (b.z0 + b.z1) / 2;
+  const bottom: [number, number] = [a.x0 - 0.8, midA];
+  const onLanding: [number, number] = [
+    (landing.x0 + landing.x1) / 2,
+    (landing.z0 + landing.z1) / 2,
+  ];
+  const topEnd: [number, number] = [(top.x0 + top.x1) / 2, (bridge.z0 + bridge.z1) / 2];
+  const up = roomLevel(room) === 1;
+  const lifted = floor > 0.05;
+  if (lifted && inRect(a, x, z)) return up ? onLanding : bottom;
+  if (lifted && inRect(landing, x, z)) return up ? [b.x0, midB] : [a.x0, midA];
+  if (lifted && inRect(b, x, z)) return up ? topEnd : onLanding;
+  const level = floor >= LEVEL_SPLIT ? 1 : 0;
+  if (roomLevel(room) === level) return doorFront(room, 0.5);
+  return up ? bottom : [b.x0 + 0.5, midB];
+}
 
+export type CollectTarget = { missionId: string; x: number; y: number; z: number };
+
+/** Altura dos olhos do jogador (m). */
+const EYE_H = 1.68;
+const MOUSE_SENS = 0.0022;
+const TOUCH_SENS = 0.0055;
+const PITCH_MAX = (75 * Math.PI) / 180; // ±75°
+
+/**
+ * Jogador em primeira pessoa: câmera nos olhos, corpo oculto.
+ * Olhar: mouse com Pointer Lock (clique na tela) ou arrastando; no celular, arrastar o dedo.
+ * Andar: `input` (WASD/setas ou joystick) relativo para onde se olha; Shift corre.
+ */
 function Player({
-  avatar,
   input,
   controls,
   posRef,
@@ -1870,7 +2716,6 @@ function Player({
   onRoomChange,
   onCollect,
 }: {
-  avatar: AvatarLook;
   input: { current: Vec2 };
   controls: { current: Controls };
   posRef: { current: Vec2 };
@@ -1881,88 +2726,153 @@ function Player({
   onRoomChange: (roomId: string | null) => void;
   onCollect: (missionId: string) => void;
 }) {
-  const body = useRef<Group>(null);
+  const gl = useThree((state) => state.gl);
   const arrow = useRef<Group>(null);
-  const shadow = useRef<Mesh>(null);
-  const heading = useRef(Math.PI);
   const room = useRef<string | null>(null);
   const collected = useRef(new Set<string>());
-  const cameraGoal = useRef(new Vector3());
-  const lookAt = useRef(new Vector3());
-  const [moving, setMoving] = useState(false);
+  const look = useRef({ yaw: 0, pitch: 0 }); // horizonte nivelado
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const height = useRef(0);
+  const velocityY = useRef(0);
+  const bob = useRef(0);
+  const forward = useRef(new Vector3());
 
-  // atalho só de desenvolvimento para testes: window.__eeep.tp(x, z)
+  // olhar ao redor: Pointer Lock + arrastar (mouse) e arrastar (toque)
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const turn = (dx: number, dy: number, sens: number) => {
+      const l = look.current;
+      l.yaw -= dx * sens;
+      l.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, l.pitch - dy * sens));
+    };
+    let drag: { id: number; x: number; y: number } | null = null;
+    const down = (event: PointerEvent) => {
+      if (pausedRef.current) return;
+      if (event.pointerType === "mouse" && document.pointerLockElement !== canvas) {
+        try {
+          const request = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
+          request?.catch?.(() => undefined);
+        } catch {
+          // sem Pointer Lock (ex.: iframe): segue olhando por arraste
+        }
+      }
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    };
+    const move = (event: PointerEvent) => {
+      if (pausedRef.current) return;
+      if (document.pointerLockElement === canvas) {
+        turn(event.movementX, event.movementY, MOUSE_SENS);
+        return;
+      }
+      if (!drag || drag.id !== event.pointerId) return;
+      const sens = event.pointerType === "mouse" ? MOUSE_SENS * 1.4 : TOUCH_SENS;
+      turn(event.clientX - drag.x, event.clientY - drag.y, sens);
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    };
+    const up = (event: PointerEvent) => {
+      if (drag?.id === event.pointerId) drag = null;
+    };
+    canvas.addEventListener("pointerdown", down);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    canvas.style.touchAction = "none";
+    return () => {
+      canvas.removeEventListener("pointerdown", down);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+  }, [gl]);
+
+  // abrir um modal solta o mouse
+  useEffect(() => {
+    if (paused && document.pointerLockElement === gl.domElement) document.exitPointerLock();
+  }, [paused, gl]);
+
+  // atalho só de desenvolvimento para testes: window.__eeep.tp(x, z, y, yaw)
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const w = window as unknown as { __eeep?: { tp: (x: number, z: number) => void } };
+    const w = window as unknown as {
+      __eeep?: { tp: (x: number, z: number, y?: number, yaw?: number) => void };
+    };
     w.__eeep = {
-      tp: (x, z) => {
+      tp: (x, z, y = 0, yaw) => {
         posRef.current.x = x;
         posRef.current.z = z;
+        posRef.current.y = y;
+        if (yaw !== undefined) posRef.current.yaw = yaw;
       },
     };
     return () => {
       delete w.__eeep;
     };
   }, [posRef]);
-  const action = useRef<AvatarAction>({
-    running: false,
-    airborne: false,
-    punchAt: -1,
-    punchSide: -1,
-  });
-  const height = useRef(0);
-  const velocityY = useRef(0);
 
   useFrame((state, rawDelta) => {
     const delta = Math.min(rawDelta, 0.1);
     const pos = posRef.current;
-    const { x: ix, z: iz } = input.current;
-    const magnitude = Math.min(1, Math.hypot(ix, iz));
-    const isMoving = !paused && magnitude > 0.08;
-    const now = state.clock.elapsedTime;
+    const camera = state.camera as PerspectiveCamera;
     const ctl = controls.current;
+    const l = look.current;
+    // teleporte pode definir para onde olhar
+    if (pos.yaw !== undefined) {
+      l.yaw = pos.yaw;
+      l.pitch = 0;
+      delete pos.yaw;
+    }
 
     // pulo
     if (ctl.jump) {
       ctl.jump = false;
-      if (!paused && height.current === 0) velocityY.current = 5.4;
+      if (!paused && height.current === 0) velocityY.current = 4.2;
     }
     if (height.current > 0 || velocityY.current > 0) {
       velocityY.current -= 15 * delta;
       height.current = Math.max(0, height.current + velocityY.current * delta);
       if (height.current === 0) velocityY.current = 0;
     }
-    // soco (alterna as mãos)
-    if (ctl.punch) {
-      ctl.punch = false;
-      if (!paused && now - action.current.punchAt > PUNCH_DURATION * 0.75) {
-        action.current.punchAt = now;
-        action.current.punchSide = action.current.punchSide === 1 ? -1 : 1;
-      }
-    }
-    action.current.running = ctl.run;
-    action.current.airborne = height.current > 0;
+    ctl.punch = false;
 
-    if (isMoving) {
-      const speed = (ctl.run ? 7.6 : 4.6) * magnitude;
-      pos.x += (ix / Math.hypot(ix, iz)) * speed * delta;
-      pos.z += (iz / Math.hypot(ix, iz)) * speed * delta;
+    // andar relativo ao olhar (frente = -z do input)
+    const { x: ix, z: iz } = input.current;
+    const magnitude = Math.min(1, Math.hypot(ix, iz));
+    const moving = !paused && magnitude > 0.08;
+    if (moving) {
+      const speed = (ctl.run ? 5.4 : 3.1) * magnitude;
+      const fx = -Math.sin(l.yaw);
+      const fz = -Math.cos(l.yaw);
+      const rx = Math.cos(l.yaw);
+      const rz = -Math.sin(l.yaw);
+      const n = Math.hypot(ix, iz);
+      const f = -iz / n;
+      const r = ix / n;
+      pos.x += (fx * f + rx * r) * speed * delta;
+      pos.z += (fz * f + rz * r) * speed * delta;
       collide(pos);
-      const target = Math.atan2(ix, iz);
-      let diff = target - heading.current;
-      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      heading.current += diff * Math.min(1, delta * 12);
+      bob.current += delta * (ctl.run ? 13 : 9);
+    } else {
+      bob.current *= 0.9;
     }
-    if (isMoving !== moving) setMoving(isMoving);
 
-    if (body.current) {
-      body.current.position.set(pos.x, height.current, pos.z);
-      body.current.rotation.y = heading.current;
+    // piso sob o jogador: térreo, rampa ou 2º andar
+    const floor = floorHeight(pos.x, pos.z, pos.y ?? 0);
+    pos.y = floor;
+
+    // câmera nos olhos
+    const aspect = state.size.width / Math.max(1, state.size.height);
+    // FOV vertical de 75°; no celular em pé, um pouco mais aberto para não ficar estreito
+    const fov = aspect < 0.75 ? 85 : 75;
+    if (Math.abs(camera.fov - fov) > 0.1) {
+      camera.fov = fov;
+      camera.updateProjectionMatrix();
     }
-    if (shadow.current) shadow.current.position.set(pos.x, 0.02, pos.z);
+    const bobY = moving && height.current === 0 ? Math.sin(bob.current) * 0.035 : 0;
+    camera.position.set(pos.x, floor + height.current + EYE_H + bobY, pos.z);
+    camera.rotation.set(l.pitch, l.yaw, 0, "YXZ");
 
-    const current = rooms.find((r) => isInside(r, pos.x, pos.z))?.id ?? null;
+    const current = rooms.find((r) => isInside(r, pos.x, pos.z, floor))?.id ?? null;
     if (current !== room.current) {
       room.current = current;
       onRoomChange(current);
@@ -1970,60 +2880,46 @@ function Player({
 
     for (const target of collectTargets) {
       if (collected.current.has(target.missionId)) continue;
-      if (Math.hypot(pos.x - target.x, pos.z - target.z) < 0.85) {
+      if (Math.abs(target.y - floor) < 1 && Math.hypot(pos.x - target.x, pos.z - target.z) < 0.85) {
         collected.current.add(target.missionId);
         onCollect(target.missionId);
       }
     }
 
+    // seta-guia flutuando à frente, um pouco abaixo da linha dos olhos
     if (arrow.current) {
       const next = nextRoomId ? roomById[nextRoomId] : undefined;
       const target: [number, number] | null =
         next && current !== nextRoomId
-          ? next.walls === false
-            ? [next.x, next.z]
-            : doorFront(next, 0.5)
+          ? routeTarget(pos.x, pos.z, floor, next)
           : !next && goal
             ? [goal.x, goal.z]
             : null;
       arrow.current.visible = Boolean(target);
       if (target) {
-        arrow.current.position.set(pos.x, 0.06, pos.z);
+        camera.getWorldDirection(forward.current);
+        forward.current.y = 0;
+        forward.current.normalize();
+        arrow.current.position.set(
+          camera.position.x + forward.current.x * 1.5,
+          camera.position.y - 0.55,
+          camera.position.z + forward.current.z * 1.5,
+        );
         arrow.current.rotation.y = Math.atan2(target[0] - pos.x, target[1] - pos.z);
       }
     }
-
-    // celular em pé: ângulo maior e câmera mais afastada para ver mais da escola
-    const aspect = state.size.width / Math.max(1, state.size.height);
-    const portrait = aspect < 0.75;
-    const camera = state.camera as PerspectiveCamera;
-    const fov = portrait ? 68 : aspect < 1.2 ? 58 : 50;
-    if (Math.abs(camera.fov - fov) > 0.1) {
-      camera.fov = fov;
-      camera.updateProjectionMatrix();
-    }
-    const k = portrait ? 1.2 : aspect < 1.2 ? 1.1 : 1;
-    cameraGoal.current.set(pos.x, 10 * k, pos.z + 7.2 * k);
-    state.camera.position.lerp(cameraGoal.current, 1 - Math.exp(-delta * 4));
-    lookAt.current.set(pos.x, 0.8, pos.z - 0.6);
-    state.camera.lookAt(lookAt.current);
   });
 
   return (
-    <group>
-      <group ref={body} position={[spawn[0], 0, spawn[1]]}>
-        <DevAvatar look={avatar} moving={moving} action={action} />
-      </group>
-      <mesh ref={shadow} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.45, 24]} />
-        <meshBasicMaterial color="#000000" transparent opacity={0.25} depthWrite={false} />
+    <group ref={arrow}>
+      <mesh rotation={[Math.PI / 2, 0, 0]} renderOrder={10}>
+        <coneGeometry args={[0.09, 0.26, 3]} />
+        <meshBasicMaterial color="#facc15" depthTest={false} transparent opacity={0.95} />
       </mesh>
-      <group ref={arrow}>
-        <mesh position={[0, 0, 1.05]} rotation={[Math.PI / 2, 0, 0]}>
-          <coneGeometry args={[0.22, 0.45, 3]} />
-          <meshBasicMaterial color="#facc15" />
-        </mesh>
-      </group>
+      <mesh position={[0, 0, -0.17]} rotation={[Math.PI / 2, 0, 0]} renderOrder={10}>
+        <cylinderGeometry args={[0.03, 0.03, 0.14, 8]} />
+        <meshBasicMaterial color="#facc15" depthTest={false} transparent opacity={0.95} />
+      </mesh>
     </group>
   );
 }
@@ -2049,8 +2945,54 @@ function GoalRing({ x, z }: { x: number; z: number }) {
 /* Cena                                                                */
 /* ------------------------------------------------------------------ */
 
+/** Sol do meio da manhã: luz direcional que acompanha o jogador, com sombras suaves. */
+function Sun({ posRef }: { posRef: { current: Vec2 } }) {
+  const ref = useRef<DirectionalLight>(null);
+  useFrame(() => {
+    const light = ref.current;
+    if (!light) return;
+    const p = posRef.current;
+    const y = p.y ?? 0;
+    light.position.set(p.x + 16, y + 30, p.z + 12);
+    light.target.position.set(p.x, y, p.z);
+    light.target.updateMatrixWorld();
+  });
+  return (
+    <directionalLight
+      ref={ref}
+      intensity={2.6}
+      color="#fff1d6"
+      castShadow
+      shadow-mapSize={[2048, 2048]}
+      shadow-bias={-0.0004}
+      shadow-normalBias={0.04}
+      shadow-camera-left={-24}
+      shadow-camera-right={24}
+      shadow-camera-top={24}
+      shadow-camera-bottom={-24}
+      shadow-camera-near={1}
+      shadow-camera-far={90}
+    />
+  );
+}
+
+function NpcAt({ npc, currentRoom }: { npc: (typeof npcs)[number]; currentRoom: string | null }) {
+  const room = roomById[npc.room];
+  if (!room) return null;
+  const [x, z] = toWorld(room, npc.at[0], npc.at[1]);
+  return (
+    <group position={[x, roomY(room), z]} rotation={[0, doorAngle[room.door] + npc.face, 0]}>
+      <NpcFigure
+        look={npc.look}
+        seated={npc.seated}
+        label={currentRoom === npc.room ? npc.name : undefined}
+        sublabel={npc.role === "Aluno(a)" ? undefined : npc.role}
+      />
+    </group>
+  );
+}
+
 export function SchoolScene({
-  avatar,
   input,
   controls,
   posRef,
@@ -2084,25 +3026,46 @@ export function SchoolScene({
         if (mission.type !== "collect" || done[mission.id]) return [];
         const room = roomById[mission.room]!;
         const [x, z] = toWorld(room, mission.at[0], mission.at[1]);
-        return [{ missionId: mission.id, x, z }];
+        return [{ missionId: mission.id, x, y: roomY(room), z }];
       }),
     [done, trail],
   );
+  const groundRooms = rooms.filter((room) => roomLevel(room) === 0);
+  const upperRoomIds = new Set(rooms.filter((r) => roomLevel(r) === 1).map((r) => r.id));
 
   return (
     <>
-      {/* sol forte do interior do Ceará: luz direcional intensa e ambiente suave */}
-      <color attach="background" args={["#9fd3ff"]} />
-      <fog attach="fog" args={["#cde7ff", 32, 80]} />
-      <ambientLight intensity={0.55} />
-      <hemisphereLight args={["#e0f2fe", "#8a7a5c", 0.95]} />
-      <directionalLight position={[14, 26, 10]} intensity={2.5} color="#fff1cf" />
+      {/* dia ensolarado no sertão cearense: céu físico, sol quente e luz ambiente do céu */}
+      <Sky
+        distance={4500}
+        sunPosition={[16, 30, 12]}
+        turbidity={6}
+        rayleigh={1.2}
+        mieCoefficient={0.004}
+        mieDirectionalG={0.8}
+      />
+      <fog attach="fog" args={["#d6ecff", 45, 110]} />
+      <ambientLight intensity={0.35} />
+      <hemisphereLight args={["#dbeafe", "#9c8a66", 1.05]} />
+      <Sun posRef={posRef} />
 
-      <Grounds posRef={posRef} />
-      {rooms.map((room) => (
+      <Grounds />
+      {groundRooms.map((room) => (
         <RoomBlock key={room.id} room={room} />
       ))}
-      <Walls posRef={posRef} />
+      <Walls />
+      <UpperFloor>
+        {npcs
+          .filter((npc) => upperRoomIds.has(npc.room))
+          .map((npc) => (
+            <NpcAt key={npc.id} npc={npc} currentRoom={currentRoom} />
+          ))}
+      </UpperFloor>
+      {npcs
+        .filter((npc) => !upperRoomIds.has(npc.room))
+        .map((npc) => (
+          <NpcAt key={npc.id} npc={npc} currentRoom={currentRoom} />
+        ))}
 
       {trail.map((mission) => {
         const room = roomById[mission.room]!;
@@ -2112,52 +3075,20 @@ export function SchoolScene({
       {collectTargets.map((target) => {
         const mission = trail.find((m) => m.id === target.missionId);
         if (!mission || mission.type !== "collect") return null;
-        return <Collectible key={target.missionId} x={target.x} z={target.z} item={mission.item} />;
-      })}
-
-      {rooms.map((room) => {
-        const [x, z] =
-          room.walls === false
-            ? [room.x, room.z - room.d / 2 + 1]
-            : toWorld(room, 0, room.d / 2 + 0.2);
         return (
-          <Html
-            key={`label-${room.id}`}
-            position={[x, room.walls === false ? 4.6 : 3.9, z]}
-            center
-            distanceFactor={11}
-            zIndexRange={[5, 0]}
-          >
-            <span className="pointer-events-none whitespace-nowrap rounded-md bg-[#120e24]/85 px-2 py-0.5 text-[11px] font-semibold text-white shadow">
-              {room.name}
-            </span>
-          </Html>
+          <Collectible
+            key={target.missionId}
+            x={target.x}
+            y={target.y}
+            z={target.z}
+            item={mission.item}
+          />
         );
       })}
 
-      {npcs.map((npc) => {
-        const room = roomById[npc.room];
-        if (!room) return null;
-        const [x, z] = toWorld(room, npc.at[0], npc.at[1]);
-        return (
-          <group
-            key={npc.id}
-            position={[x, 0, z]}
-            rotation={[0, doorAngle[room.door] + npc.face, 0]}
-          >
-            <NpcFigure
-              look={npc.look}
-              seated={npc.seated}
-              label={currentRoom === npc.room ? npc.name : undefined}
-              sublabel={npc.role === "Aluno(a)" ? undefined : npc.role}
-            />
-          </group>
-        );
-      })}
       {goal && <GoalRing x={goal.x} z={goal.z} />}
 
       <Player
-        avatar={avatar}
         input={input}
         controls={controls}
         posRef={posRef}

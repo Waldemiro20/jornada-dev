@@ -33,9 +33,11 @@ const HAIR = { black: "#1d1630", brown: "#4a2c1a", blonde: "#e8c26a", dark: "#24
 const FARDA = "#f8fafc";
 const JEANS = "#1e3a5f";
 
-/** Carteiras das salas de aula: x em [-1.5, 0, 1.5], z em [-1, 0.5, 2]; cadeira em z + 0.45. */
+/** Carteiras das salas de aula (veja CLASS_COLS/CLASS_ROWS em SchoolWorld); cadeira em z + 0.45. */
+export const CLASS_COLS = [-1.7, -0.6, 0.6, 1.7];
+export const CLASS_ROWS = [-1.4, -0.1, 1.2, 2.5];
 function seat(col: number, row: number): [number, number] {
-  return [[-1.5, 0, 1.5][col]!, [-1, 0.5, 2][row]! + 0.5];
+  return [CLASS_COLS[col]!, CLASS_ROWS[row]! + 0.5];
 }
 
 type Student = [name: string, girl: boolean, skin: number, hair: HairStyle, hairColor: string];
@@ -67,7 +69,7 @@ function teacher(room: string, name: string, look: NpcLook): Npc {
   };
 }
 
-const seats5: [number, number][] = [seat(0, 0), seat(1, 0), seat(2, 0), seat(0, 1), seat(2, 1)];
+const seats5: [number, number][] = [seat(0, 0), seat(1, 0), seat(3, 0), seat(0, 1), seat(2, 1)];
 
 export const npcs: Npc[] = [
   /* ---------------- 1º ano ---------------- */
@@ -132,6 +134,27 @@ export const npcs: Npc[] = [
     shirt: "#16a34a",
     pants: "#1f2937",
   }),
+
+  /* ---------------- Secretaria ---------------- */
+  {
+    id: "secretaria-atendente",
+    name: "Secretária Rosa",
+    role: "Secretaria",
+    room: "secretaria",
+    // atrás da janela de atendimento, olhando para a porta
+    at: [-1.9, 0.15],
+    face: 0,
+    seated: true,
+    look: {
+      girl: true,
+      skin: SKINS[2]!,
+      hair: "bun",
+      hairColor: HAIR.dark,
+      shirt: "#901a1e",
+      pants: "#1f2937",
+      glasses: true,
+    },
+  },
 ];
 
 /** Guia do jogo. A foto fica em public/chrystian.jpg. */

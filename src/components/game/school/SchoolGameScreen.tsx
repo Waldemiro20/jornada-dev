@@ -8,7 +8,6 @@ import {
   Flag,
   GraduationCap,
   FlaskConical,
-  Hand,
   School,
   Map as MapIcon,
   MapPin,
@@ -30,9 +29,21 @@ import {
   COURSE_ROOMS,
   courseContent,
   labInfo,
-  corridors,
-  courtyard,
   atPortaria,
+  doorAngle,
+  BACK_Z,
+  bridge,
+  courtyard,
+  courtyardEast,
+  ENTRANCE_HALF,
+  FACADE_Z,
+  hall,
+  OUTER_X,
+  ramp,
+  levelOf,
+  roomLevel,
+  roomY,
+  upperCorridor,
   toWorld,
   missionByRoom,
   missions,
@@ -72,7 +83,11 @@ export function SchoolGameScreen({
 }) {
   const input = useRef<Vec2>({ x: 0, z: 0 });
   const controls = useRef<Controls>({ run: false, jump: false, punch: false });
-  const posRef = useRef<Vec2>({ x: spawn[0], z: spawn[1] });
+  const posRef = useRef<Vec2>({ x: spawn[0], z: spawn[1], y: 0 });
+  // sombras só em telas com mouse (desktop): no celular pesam demais
+  const [richGraphics] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(pointer: fine)").matches,
+  );
 
   const [done, setDone] = useState<Done>({});
   const [currentRoom, setCurrentRoom] = useState<string | null>(null);
@@ -116,7 +131,7 @@ export function SchoolGameScreen({
     return () => window.clearTimeout(id);
   }, []);
 
-  /* 2. Ao chegar na placa PORTARIA · ENTRADA: escola ou curso? */
+  /* 2. Ao chegar na placa ENTRADA: escola ou curso? */
   useEffect(() => {
     if (route || showWelcome || showPortaria) return;
     const id = window.setInterval(() => {
@@ -134,9 +149,12 @@ export function SchoolGameScreen({
     input.current = { x: 0, z: 0 };
     setTeleporting(label);
     window.setTimeout(() => {
-      const [x, z] = toWorld(room, 0.75, room.d / 2 - 0.7);
+      const [x, z] = toWorld(room, 0, room.d / 2 - 0.7);
       posRef.current.x = x;
       posRef.current.z = z;
+      posRef.current.y = roomY(room);
+      // de frente para o quadro
+      posRef.current.yaw = doorAngle[room.door];
     }, 450);
     window.setTimeout(() => setTeleporting(null), 1100);
   }, []);
@@ -332,7 +350,8 @@ export function SchoolGameScreen({
     <main className="relative h-[100dvh] min-h-[480px] overflow-hidden bg-[#bfe3ff] text-white">
       <Canvas
         dpr={[1, 1.5]}
-        camera={{ position: [spawn[0], 12, spawn[1] + 9], fov: 50, near: 0.1, far: 140 }}
+        shadows={richGraphics ? "soft" : false}
+        camera={{ position: [spawn[0], 1.7, spawn[1]], fov: 72, near: 0.05, far: 160 }}
         gl={{ antialias: true }}
         className="absolute inset-0"
         fallback={<WebGLFallback />}
@@ -354,6 +373,12 @@ export function SchoolGameScreen({
           />
         </Suspense>
       </Canvas>
+
+      {/* mira e dica de controles da primeira pessoa */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-1/2 z-[5] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/85 shadow-[0_0_0_1.5px_rgba(0,0,0,0.35)]"
+      />
 
       {/* ---------------- HUD ---------------- */}
       <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 bg-gradient-to-b from-[#0f0b1e]/85 to-transparent px-3 pb-6 pt-[max(0.75rem,env(safe-area-inset-top))]">
@@ -493,7 +518,7 @@ export function SchoolGameScreen({
           <div className="flex max-w-full items-center gap-1.5 rounded-full bg-[#120e24]/80 px-3 py-1.5 text-xs backdrop-blur">
             <MapPin className="h-3.5 w-3.5 shrink-0 text-amber-300" />
             <span className="truncate">
-              Siga a seta até a <b>PORTARIA · ENTRADA</b>
+              Siga a seta até a <b>ENTRADA</b>
             </span>
           </div>
         ) : nextMission ? (
@@ -535,21 +560,12 @@ export function SchoolGameScreen({
       <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10 h-40 w-44">
         <div className="absolute bottom-0 right-0">
           <ActionButton
-            label="Soco"
-            big
-            disabled={paused}
-            onPress={() => (controls.current.punch = true)}
-          >
-            <Hand className="h-6 w-6" />
-          </ActionButton>
-        </div>
-        <div className="absolute bottom-2 left-0">
-          <ActionButton
             label="Pular"
+            big
             disabled={paused}
             onPress={() => (controls.current.jump = true)}
           >
-            <ChevronsUp className="h-5 w-5" />
+            <ChevronsUp className="h-6 w-6" />
           </ActionButton>
         </div>
         <div className="absolute right-3 top-0">
@@ -564,7 +580,11 @@ export function SchoolGameScreen({
         </div>
       </div>
       <p className="pointer-events-none absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 rounded-lg bg-[#120e24]/70 px-3 py-1.5 text-xs text-white/80 md:block">
-        WASD/setas: andar · Shift: correr · Espaço: pular · F: soco
+        Clique na tela para olhar com o mouse · WASD/setas: andar · Shift: correr · Espaço: pular ·
+        Esc: soltar o mouse
+      </p>
+      <p className="pointer-events-none absolute left-1/2 top-24 z-10 -translate-x-1/2 rounded-lg bg-[#120e24]/60 px-3 py-1 text-[11px] text-white/80 md:hidden">
+        Arraste a tela para olhar ao redor
       </p>
 
       {/* ---------------- Modal de missão ---------------- */}
@@ -763,7 +783,7 @@ export function SchoolGameScreen({
                 escola!
               </p>
               <p className="mt-2 text-sm text-white/60">
-                Siga a seta amarela até a placa <b>PORTARIA · ENTRADA</b>. Te encontro lá!
+                Siga a seta amarela até a placa <b>ENTRADA</b>. Te encontro lá!
               </p>
               <button
                 type="button"
@@ -799,7 +819,7 @@ export function SchoolGameScreen({
                 <GuidePortrait size="lg" />
               </div>
               <p className="mt-3 font-mono text-[10px] uppercase tracking-widest text-amber-300">
-                Portaria · Entrada
+                Entrada
               </p>
               <h2 id="guide-title" className="font-display text-2xl font-bold">
                 Olá, {player.nome}!
@@ -818,7 +838,7 @@ export function SchoolGameScreen({
                 >
                   <School className="h-6 w-6 text-emerald-300" />A escola
                   <span className="text-xs font-normal text-white/60">
-                    Salas de aula, laboratórios, biblioteca, quadra e muito mais
+                    Auditório, biblioteca, laboratórios, refeitório, quadra e muito mais
                   </span>
                 </button>
                 <button
@@ -1074,16 +1094,19 @@ export function SchoolGameScreen({
 }
 
 const MAP_LABELS: Record<string, string> = {
-  professores: "Profs.",
-  sala1: "1º ano",
-  sala2: "2º ano",
-  sala3: "3º ano",
-  informatica: "Informát.",
-  matematica: "Matemát.",
-  linguas: "Línguas",
-  biblioteca: "Biblioteca",
+  sala1: "1º Desenv.",
+  sala2: "2º Desenv.",
+  sala3: "3º Desenv.",
   auditorio: "Auditório",
-  cantina: "Cantina",
+  biblioteca: "Biblioteca",
+  secretaria: "Secretaria",
+  professores: "Profs.",
+  linguas: "Línguas",
+  informatica: "Informát.",
+  "sanitario-f": "WC F",
+  "sanitario-m": "WC M",
+  ciencias: "Lab. Ciências",
+  cantina: "Refeitório",
   quadra: "Quadra",
 };
 
@@ -1096,61 +1119,141 @@ function SchoolMap({
   nextRoomId: string | null;
   player: Vec2;
 }) {
+  const level = levelOf(player.y ?? 0);
+  const [floor, setFloor] = useState(level);
   return (
-    <svg
-      viewBox="-25 -42 50 72"
-      className="mt-3 max-h-[45dvh] w-full rounded-xl bg-[#8cbf5f]"
-      role="img"
-      aria-label="Mapa da escola"
-    >
-      {corridors.map((c, i) => (
-        <rect key={i} x={c.x0} y={c.z0} width={c.x1 - c.x0} height={c.z1 - c.z0} fill="#e8cfae" />
-      ))}
-      <rect
-        x={courtyard.x0}
-        y={courtyard.z0}
-        width={courtyard.x1 - courtyard.x0}
-        height={courtyard.z1 - courtyard.z0}
-        fill="#6fbf4a"
-        stroke="#15803d"
-        strokeWidth={0.25}
-      />
-      <rect x={-3} y={18} width={6} height={11} fill="#d6d3d1" />
-      {rooms.map((room) => {
-        const [sx, sz] = worldSize(room);
-        const mission = missionByRoom[room.id];
-        const isDone = mission ? Boolean(done[mission.id]) : false;
-        return (
-          <g key={room.id}>
+    <div className="mt-3">
+      <div className="mb-2 flex gap-1.5 text-xs font-semibold" role="group" aria-label="Andar">
+        {(["Térreo", "2º andar"] as const).map((label, i) => (
+          <button
+            key={label}
+            type="button"
+            aria-pressed={floor === i}
+            onClick={() => setFloor(i as 0 | 1)}
+            className={`rounded-full px-3 py-1 ${
+              floor === i ? "bg-amber-400 text-[#1c1206]" : "bg-white/10 text-white/80"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <svg
+        viewBox="-21 -36 42 60"
+        className="max-h-[45dvh] w-full rounded-xl bg-[#8cbf5f]"
+        role="img"
+        aria-label={`Mapa da escola · ${floor === 1 ? "2º andar" : "térreo"}`}
+      >
+        {/* prédio */}
+        <rect
+          x={-OUTER_X}
+          y={BACK_Z}
+          width={2 * OUTER_X}
+          height={FACADE_Z - BACK_Z}
+          fill="#e7e5e4"
+          opacity={floor === 1 ? 0.35 : 1}
+        />
+        {floor === 0 &&
+          [hall, courtyard, courtyardEast].map((r, i) => (
             <rect
-              x={room.x - sx / 2}
-              y={room.z - sz / 2}
-              width={sx}
-              height={sz}
-              fill={room.accent}
-              fillOpacity={room.id === nextRoomId ? 0.95 : 0.55}
-              stroke={room.id === nextRoomId ? "#facc15" : "#f8fafc"}
-              strokeWidth={room.id === nextRoomId ? 0.5 : 0.2}
+              key={i}
+              x={r.x0}
+              y={r.z0}
+              width={r.x1 - r.x0}
+              height={r.z1 - r.z0}
+              fill={i === 0 ? "#c9cbcd" : "#a7c98a"}
             />
-            <text
-              x={room.x}
-              y={room.z + 0.4}
-              fontSize={1.05}
-              textAnchor="middle"
-              fill="#fff"
-              fontWeight="bold"
-            >
-              {isDone ? "✓ " : ""}
-              {MAP_LABELS[room.id] ?? room.name}
-            </text>
-          </g>
-        );
-      })}
-      <circle cx={player.x} cy={player.z} r={1} fill="#facc15" stroke="#1c1206" strokeWidth={0.3} />
-      <text x={0} y={28} fontSize={1.4} textAnchor="middle" fill="#14532d" fontWeight="bold">
-        ENTRADA
-      </text>
-    </svg>
+          ))}
+        {floor === 1 &&
+          [upperCorridor, bridge].map((r, i) => (
+            <rect
+              key={i}
+              x={r.x0}
+              y={r.z0}
+              width={r.x1 - r.x0}
+              height={r.z1 - r.z0}
+              fill="#e8cfae"
+              stroke="#901a1e"
+              strokeWidth={0.25}
+            />
+          ))}
+        {/* rampa em ziguezague e plataforma */}
+        {[ramp.a, ramp.landing, ramp.b, ramp.top].map((r, i) => (
+          <rect
+            key={i}
+            x={r.x0}
+            y={r.z0}
+            width={r.x1 - r.x0}
+            height={r.z1 - r.z0}
+            fill={i === 2 ? "#7a171a" : "#901a1e"}
+          />
+        ))}
+        <text
+          x={(ramp.a.x0 + ramp.a.x1) / 2}
+          y={ramp.a.z1 + 1.2}
+          fontSize={0.9}
+          textAnchor="middle"
+          fill="#7a171a"
+          fontWeight="bold"
+        >
+          RAMPA
+        </text>
+        {floor === 0 && (
+          <rect
+            x={-ENTRANCE_HALF}
+            y={FACADE_Z}
+            width={ENTRANCE_HALF * 2}
+            height={8}
+            fill="#e4ded3"
+          />
+        )}
+        {rooms
+          .filter((room) => roomLevel(room) === floor)
+          .map((room) => {
+            const [sx, sz] = worldSize(room);
+            const mission = missionByRoom[room.id];
+            const isDone = mission ? Boolean(done[mission.id]) : false;
+            return (
+              <g key={room.id}>
+                <rect
+                  x={room.x - sx / 2}
+                  y={room.z - sz / 2}
+                  width={sx}
+                  height={sz}
+                  fill={room.accent}
+                  fillOpacity={room.id === nextRoomId ? 0.95 : 0.6}
+                  stroke={room.id === nextRoomId ? "#facc15" : "#f8fafc"}
+                  strokeWidth={room.id === nextRoomId ? 0.5 : 0.2}
+                />
+                <text
+                  x={room.x}
+                  y={room.z + 0.4}
+                  fontSize={1.05}
+                  textAnchor="middle"
+                  fill="#fff"
+                  fontWeight="bold"
+                >
+                  {isDone ? "✓ " : ""}
+                  {MAP_LABELS[room.id] ?? room.name}
+                </text>
+              </g>
+            );
+          })}
+        {level === floor && (
+          <circle
+            cx={player.x}
+            cy={player.z}
+            r={1}
+            fill="#facc15"
+            stroke="#1c1206"
+            strokeWidth={0.3}
+          />
+        )}
+        <text x={0} y={22} fontSize={1.4} textAnchor="middle" fill="#14532d" fontWeight="bold">
+          ENTRADA
+        </text>
+      </svg>
+    </div>
   );
 }
 

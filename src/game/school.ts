@@ -1,26 +1,41 @@
 /**
  * Mapa da EEEP Dr. Salomão Alves de Moura (Aracoiaba - CE).
  *
- * Não há planta pública da escola. O layout segue o "Projeto Escola Padrão"
- * do MEC usado nas EEEPs do Ceará: blocos independentes em volta de uma área
- * de vivência — bloco administrativo na entrada, salas de aula, laboratórios,
- * biblioteca, auditório, refeitório e quadra poliesportiva coberta.
- * O jogo trabalha apenas o curso técnico de Desenvolvimento de Sistemas (DS).
+ * Prédio de dois andares, em verde e branco, com detalhes vermelho-vinho.
  *
- * Coordenadas em metros. x → leste, z → sul (a entrada fica ao sul).
+ *  Térreo
+ *   - Entrada (sul) com pátio coberto de pé-direito altíssimo (telhas metálicas
+ *     e treliças vermelhas aparentes).
+ *       Esquerda: espaço da logo da escola, Auditório (portas de vidro) e a
+ *       parede azul do mural "SAM", com placa de setores e pingue-pongue.
+ *       Direita: Biblioteca (janela vertical e letreiro vertical) e a rampa
+ *       vermelha de acessibilidade que leva ao 2º andar.
+ *   - Pátio central descoberto e arborizado entre os dois blocos.
+ *       Bloco esquerdo: Secretaria, Sala dos Professores, Laboratório de
+ *       Línguas e Laboratório de Informática.
+ *       Bloco direito: Laboratório de Química, Biologia e Física e Sanitários.
+ *   - Fundo: Refeitório e Quadra poliesportiva.
+ *  2º andar (sobre o bloco esquerdo)
+ *   - Corredor aberto com vista para o pátio central e as salas
+ *     "1º Desenvolvimento", "2º Desenvolvimento" e "3º Desenvolvimento".
+ *
+ * Coordenadas em metros. x → leste, z → sul (a entrada fica ao sul), y ↑.
  */
 
 export type DoorSide = "n" | "s" | "e" | "w";
 export type RoomKind =
+  | "office"
   | "teachers"
   | "classroom"
   | "lab-info"
-  | "lab-math"
   | "lab-lang"
+  | "lab-science"
+  | "restroom"
   | "library"
   | "auditorium"
   | "canteen"
   | "court";
+export type Level = 0 | 1;
 
 export type Room = {
   id: string;
@@ -34,173 +49,245 @@ export type Room = {
   /** profundidade (da porta até o fundo) */
   d: number;
   door: DoorSide;
+  /** largura do vão da porta (padrão 1,7 m) */
+  doorW?: number;
+  /** portas de vidro (abertas) no vão */
+  glassDoor?: boolean;
+  /** letreiro em relevo vermelho em vez da faixa colorida acima da porta */
+  reliefSign?: boolean;
+  /** revestimento das paredes (padrão: azulejo) */
+  wallTex?: WallTex;
+  /** false = espaço aberto, sem paredes (quadra) */
+  walls?: boolean;
+  /** 0 = térreo, 1 = 2º andar */
+  level?: Level;
   floor: string;
   accent: string;
   /** texto do quadro/placa interna */
   board?: string;
-  walls?: boolean;
-  /** cor das paredes */
-  wall?: string;
 };
 
+/** Topo da laje do 2º andar. */
+export const FLOOR2_Y = 3.2;
+/** Pé-direito das paredes do térreo e do 2º andar. */
+export const WALL_H = 3;
+export const WALL_H2 = 2.8;
+/** Abaixo disso o jogador está no térreo; acima, no 2º andar. */
+export const LEVEL_SPLIT = FLOOR2_Y / 2;
+
+/** Linhas principais da planta. */
+export const FACADE_Z = 14.2;
+export const ENTRANCE_HALF = 2.5;
+export const BLOCK_X = 10.5; // fachada dos blocos voltada para os corredores
+export const OUTER_X = 18.5; // paredes externas laterais
+export const PATIO_X = 7.5; // borda do pátio central (peitoris)
+export const BACK_Z = -21; // fundo dos blocos
+
+const LEFT_X = -(BLOCK_X + OUTER_X) / 2;
+const RIGHT_X = (BLOCK_X + OUTER_X) / 2;
+const BLOCK_D = OUTER_X - BLOCK_X;
+
 export const rooms: Room[] = [
-  // Bloco administrativo (entrada)
-  {
-    id: "professores",
-    wall: "#ece5d9",
-    name: "Sala dos Professores",
-    kind: "teachers",
-    x: 12,
-    z: 15,
-    w: 6,
-    d: 6,
-    door: "n",
-    floor: "#d6d3d1",
-    accent: "#10b981",
-    board: "PROFESSORES",
-  },
-  // Bloco pedagógico (salas de aula) — oeste
+  /* ---------------- 2º andar: salas de DS (lado esquerdo) ---------------- */
   {
     id: "sala1",
-    wall: "#ece5d9",
-    name: "Sala do 1º ano · DS",
+    name: "1º Desenvolvimento",
     kind: "classroom",
-    x: -17,
-    z: 6,
-    w: 5.5,
-    d: 7,
+    level: 1,
+    x: LEFT_X,
+    z: -1.5,
+    w: 7,
+    d: BLOCK_D,
     door: "e",
     floor: "#e7e5e4",
-    accent: "#7c3aed",
-    board: "1º ANO · DS",
+    accent: "#15803d",
+    board: "Lógica de Programação",
   },
   {
     id: "sala2",
-    wall: "#ece5d9",
-    name: "Sala do 2º ano · DS",
+    name: "2º Desenvolvimento",
     kind: "classroom",
-    x: -17,
-    z: 0.5,
-    w: 5.5,
-    d: 7,
+    level: 1,
+    x: LEFT_X,
+    z: -8.5,
+    w: 7,
+    d: BLOCK_D,
     door: "e",
     floor: "#e7e5e4",
-    accent: "#8b5cf6",
-    board: "2º ANO · DS",
+    accent: "#16a34a",
+    board: "Banco de Dados · Web",
   },
   {
     id: "sala3",
-    wall: "#ece5d9",
-    name: "Sala do 3º ano · DS",
+    name: "3º Desenvolvimento",
     kind: "classroom",
-    x: -17,
-    z: -5,
-    w: 5.5,
-    d: 7,
+    level: 1,
+    x: LEFT_X,
+    z: -15.5,
+    w: 7,
+    d: BLOCK_D,
     door: "e",
     floor: "#e7e5e4",
-    accent: "#a855f7",
-    board: "3º ANO · DS",
+    accent: "#166534",
+    board: "Projeto Final · Expotec",
   },
-  // Bloco de laboratórios — leste
+
+  /* ---------------- Térreo: entrada ---------------- */
   {
-    id: "informatica",
-    wall: "#ece5d9",
-    name: "Laboratório de Informática",
-    kind: "lab-info",
-    x: 17,
-    z: 6,
-    w: 5.5,
-    d: 7,
-    door: "w",
-    floor: "#cbd5e1",
-    accent: "#2563eb",
-    board: "LAB. INFORMÁTICA",
+    id: "auditorio",
+    name: "Auditório",
+    kind: "auditorium",
+    x: LEFT_X,
+    z: 9.5,
+    w: 9,
+    d: BLOCK_D,
+    door: "e",
+    doorW: 2.4,
+    glassDoor: true,
+    reliefSign: true,
+    wallTex: "tiles",
+    floor: "#57534e",
+    accent: "#901a1e",
+    board: "EXPOTEC",
   },
   {
-    id: "matematica",
-    wall: "#ece5d9",
-    name: "Laboratório de Matemática",
-    kind: "lab-math",
-    x: 17,
-    z: 0.5,
-    w: 5.5,
-    d: 7,
+    id: "biblioteca",
+    name: "Biblioteca",
+    kind: "library",
+    x: RIGHT_X,
+    z: 9,
+    w: 10,
+    d: BLOCK_D,
     door: "w",
-    floor: "#e2e8f0",
-    accent: "#7c3aed",
-    board: "LAB. MATEMÁTICA",
+    glassDoor: true,
+    floor: "#b08968",
+    accent: "#901a1e",
+    board: "BIBLIOTECA",
+  },
+
+  /* ---------------- Bloco esquerdo (térreo) ---------------- */
+  {
+    id: "secretaria",
+    name: "Secretaria",
+    kind: "office",
+    x: LEFT_X,
+    z: -1,
+    w: 6,
+    d: BLOCK_D,
+    door: "e",
+    doorW: 2,
+    glassDoor: true,
+    floor: "#d6d3d1",
+    accent: "#15803d",
+    board: "SECRETARIA",
+  },
+  {
+    id: "professores",
+    name: "Sala dos Professores",
+    kind: "teachers",
+    x: LEFT_X,
+    z: -6.5,
+    w: 5,
+    d: BLOCK_D,
+    door: "e",
+    floor: "#d6d3d1",
+    accent: "#15803d",
+    board: "PROFESSORES",
   },
   {
     id: "linguas",
-    wall: "#ece5d9",
     name: "Laboratório de Línguas",
     kind: "lab-lang",
-    x: 17,
-    z: -5,
-    w: 5.5,
-    d: 7,
-    door: "w",
+    x: LEFT_X,
+    z: -12,
+    w: 6,
+    d: BLOCK_D,
+    door: "e",
     floor: "#e2e8f0",
     accent: "#dc2626",
     board: "HELLO · HOLA",
   },
-  // Bloco de convivência — norte
   {
-    id: "biblioteca",
-    wall: "#ece5d9",
-    name: "Biblioteca",
-    kind: "library",
-    x: -12,
-    z: -18.5,
-    w: 8,
-    d: 8,
-    door: "s",
-    floor: "#b08968",
-    accent: "#b45309",
-    board: "BIBLIOTECA",
+    id: "informatica",
+    name: "Laboratório de Informática",
+    kind: "lab-info",
+    x: LEFT_X,
+    z: -18,
+    w: 6,
+    d: BLOCK_D,
+    door: "e",
+    floor: "#cbd5e1",
+    accent: "#2563eb",
+    board: "LAB. INFORMÁTICA",
+  },
+
+  /* ---------------- Bloco direito (térreo) ---------------- */
+  {
+    id: "sanitario-f",
+    name: "Sanitário Feminino",
+    kind: "restroom",
+    x: RIGHT_X,
+    z: -2,
+    w: 4,
+    d: BLOCK_D,
+    door: "w",
+    floor: "#e2e8f0",
+    accent: "#db2777",
   },
   {
-    id: "auditorio",
-    wall: "#ece5d9",
-    name: "Auditório",
-    kind: "auditorium",
-    x: 0,
-    z: -19,
-    w: 12,
-    d: 9,
-    door: "s",
-    floor: "#57534e",
-    accent: "#be123c",
-    board: "EXPOTEC",
+    id: "sanitario-m",
+    name: "Sanitário Masculino",
+    kind: "restroom",
+    x: RIGHT_X,
+    z: -6,
+    w: 4,
+    d: BLOCK_D,
+    door: "w",
+    floor: "#e2e8f0",
+    accent: "#2563eb",
   },
+  {
+    id: "ciencias",
+    name: "Laboratório de Química, Biologia e Física",
+    kind: "lab-science",
+    x: RIGHT_X,
+    z: -12.5,
+    w: 9,
+    d: BLOCK_D,
+    door: "w",
+    doorW: 2,
+    floor: "#e5e7eb",
+    accent: "#0d9488",
+    board: "QUÍMICA · BIOLOGIA · FÍSICA",
+  },
+
+  /* ---------------- Fundo da escola ---------------- */
   {
     id: "cantina",
-    wall: "#ece5d9",
-    name: "Cantina / Refeitório",
+    name: "Refeitório",
     kind: "canteen",
-    x: 12,
-    z: -18.5,
-    w: 8,
-    d: 8,
+    x: -8.5,
+    z: -25,
+    w: 15,
+    d: 7,
     door: "s",
+    doorW: 3.2,
     floor: "#e8e1d5",
     accent: "#ea580c",
     board: "CARDÁPIO DO DIA",
   },
-  // Quadra poliesportiva coberta
   {
     id: "quadra",
     name: "Quadra Poliesportiva",
     kind: "court",
-    x: 0,
-    z: -33,
-    w: 20,
-    d: 13,
+    x: 10,
+    z: -27.5,
+    w: 16,
+    d: 11,
     door: "s",
+    walls: false,
     floor: "#0f766e",
     accent: "#facc15",
-    walls: false,
   },
 ];
 
@@ -213,7 +300,6 @@ export const roomById = Object.fromEntries(rooms.map((room) => [room.id, room]))
 /* Geometria                                                           */
 /* ------------------------------------------------------------------ */
 
-export const WALL_H = 2.6;
 const WALL_T = 0.2;
 const DOOR_W = 1.7;
 
@@ -223,6 +309,12 @@ export const doorAngle: Record<DoorSide, number> = {
   n: Math.PI,
   w: -Math.PI / 2,
 };
+
+export const roomLevel = (room: Room): Level => room.level ?? 0;
+/** Altura do piso da sala. */
+export const roomY = (room: Room) => (roomLevel(room) === 1 ? FLOOR2_Y : 0);
+export const roomWallH = (room: Room) => (roomLevel(room) === 1 ? WALL_H2 : WALL_H);
+export const levelOf = (y: number): Level => (y >= LEVEL_SPLIT ? 1 : 0);
 
 /** Tamanho no mundo (eixo x, eixo z). */
 export function worldSize(room: Room): [number, number] {
@@ -242,10 +334,19 @@ export function doorFront(room: Room, distance = 1.4): [number, number] {
   return toWorld(room, 0, room.d / 2 + distance);
 }
 
-export function isInside(room: Room, x: number, z: number, inset = 0.2) {
+/** O ponto (x, z) na altura y está dentro da sala (considera o andar). */
+export function isInside(room: Room, x: number, z: number, y = 0, inset = 0.2) {
+  if (Math.abs(y - roomY(room)) > 1) return false;
   const [sx, sz] = worldSize(room);
   return Math.abs(x - room.x) < sx / 2 - inset && Math.abs(z - room.z) < sz / 2 - inset;
 }
+
+export type Rect = { x0: number; x1: number; z0: number; z1: number };
+
+export const inRect = (r: Rect, x: number, z: number) =>
+  x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1;
+
+export type WallTex = "azulejo" | "facade" | "mural" | "tiles";
 
 export type Wall = {
   x: number;
@@ -254,29 +355,57 @@ export type Wall = {
   sz: number;
   /** "x" = parede que corre no eixo x (pode tapar a câmera) */
   axis: "x" | "z";
+  /** base e altura (a colisão vale para quem está nessa faixa de altura) */
+  y0: number;
+  h: number;
   color: string;
-  /** revestimento: placas cerâmicas escuras da fachada */
-  tex?: "tiles";
+  tex?: WallTex;
 };
+
+/** Paredes internas: barra de azulejo branco até meia altura com filete vermelho. */
+const INNER = "#f4f4f2";
 
 function wallSegments(
   axis: "x" | "z",
   fixed: number,
   from: number,
   to: number,
-  door: boolean,
-  color: string,
+  doorW: number,
+  y0: number,
+  h: number,
+  tex: WallTex,
 ): Wall[] {
-  const pieces: [number, number][] = door
-    ? [
-        [from, (from + to) / 2 - DOOR_W / 2],
-        [(from + to) / 2 + DOOR_W / 2, to],
-      ]
-    : [[from, to]];
+  const pieces: [number, number][] =
+    doorW > 0
+      ? [
+          [from, (from + to) / 2 - doorW / 2],
+          [(from + to) / 2 + doorW / 2, to],
+        ]
+      : [[from, to]];
   return pieces.map(([a, b]) =>
     axis === "x"
-      ? { x: (a + b) / 2, z: fixed, sx: b - a + WALL_T, sz: WALL_T, axis, color }
-      : { x: fixed, z: (a + b) / 2, sx: WALL_T, sz: b - a + WALL_T, axis, color },
+      ? {
+          x: (a + b) / 2,
+          z: fixed,
+          sx: b - a + WALL_T,
+          sz: WALL_T,
+          axis,
+          y0,
+          h,
+          color: INNER,
+          tex,
+        }
+      : {
+          x: fixed,
+          z: (a + b) / 2,
+          sx: WALL_T,
+          sz: b - a + WALL_T,
+          axis,
+          y0,
+          h,
+          color: INNER,
+          tex,
+        },
   );
 }
 
@@ -287,121 +416,277 @@ export function roomWalls(room: Room): Wall[] {
   const x1 = room.x + sx / 2;
   const z0 = room.z - sz / 2;
   const z1 = room.z + sz / 2;
-  const c = room.wall ?? "#f5f5f4";
+  const dw = room.doorW ?? DOOR_W;
+  const y0 = roomY(room);
+  const h = roomWallH(room);
+  const tex = room.wallTex ?? "azulejo";
   return [
-    ...wallSegments("x", z0, x0, x1, room.door === "n", c),
-    ...wallSegments("x", z1, x0, x1, room.door === "s", c),
-    ...wallSegments("z", x0, z0, z1, room.door === "w", c),
-    ...wallSegments("z", x1, z0, z1, room.door === "e", c),
+    ...wallSegments("x", z0, x0, x1, room.door === "n" ? dw : 0, y0, h, tex),
+    ...wallSegments("x", z1, x0, x1, room.door === "s" ? dw : 0, y0, h, tex),
+    ...wallSegments("z", x0, z0, z1, room.door === "w" ? dw : 0, y0, h, tex),
+    ...wallSegments("z", x1, z0, z1, room.door === "e" ? dw : 0, y0, h, tex),
   ];
 }
 
-/* Fachada principal e Pátio SAM ------------------------------------ */
+/** Retângulo em coordenadas locais da sala → parede (divisória) no mundo. */
+function localWall(room: Room, lx0: number, lx1: number, lz0: number, lz1: number): Wall {
+  const [ax, az] = toWorld(room, lx0, lz0);
+  const [bx, bz] = toWorld(room, lx1, lz1);
+  const sx = Math.max(Math.abs(bx - ax), WALL_T);
+  const sz = Math.max(Math.abs(bz - az), WALL_T);
+  return {
+    x: (ax + bx) / 2,
+    z: (az + bz) / 2,
+    sx,
+    sz,
+    axis: sx >= sz ? "x" : "z",
+    y0: roomY(room),
+    h: roomWallH(room),
+    color: INNER,
+    tex: "azulejo",
+  };
+}
 
-/** Cinza ardósia das placas da fachada. */
-export const FACADE_COLOR = "#35393c";
-/** Linha da fachada (z) e limites do Pátio SAM coberto, à esquerda do hall. */
-export const FACADE_Z = 18;
-export const patioSam: Rect = { x0: -10.2, x1: -3, z0: 12, z1: 18 };
+/* Entrada, pátio e mural -------------------------------------------- */
 
-const facadeWalls: Wall[] = [
-  { x: -6.7, z: FACADE_Z, sx: 7, sz: WALL_T, axis: "x", color: FACADE_COLOR, tex: "tiles" },
-  { x: 6.1, z: FACADE_Z, sx: 5.8, sz: WALL_T, axis: "x", color: FACADE_COLOR, tex: "tiles" },
-  // parede do mural "SAM" (face leste, voltada para o pátio)
-  { x: -10.3, z: 15.05, sx: WALL_T, sz: 6.1, axis: "z", color: "#2f6fb5" },
+/** Altura das tesouras do pátio coberto da entrada (pé-direito alto). */
+export const ROOF_Y = 8;
+/** Pátio coberto da entrada. */
+export const hall: Rect = { x0: -BLOCK_X, x1: BLOCK_X, z0: 0.2, z1: FACADE_Z };
+/** Pátio central descoberto entre os blocos (com a extensão atrás do laboratório). */
+export const courtyard: Rect = { x0: -PATIO_X, x1: PATIO_X, z0: BACK_Z, z1: hall.z0 };
+export const courtyardEast: Rect = { x0: PATIO_X, x1: OUTER_X, z0: BACK_Z, z1: -17 };
+/** Corredores térreos cobertos ao longo dos blocos. */
+export const corridorWest: Rect = { x0: -BLOCK_X, x1: -PATIO_X, z0: BACK_Z, z1: hall.z0 };
+export const corridorEast: Rect = { x0: PATIO_X, x1: BLOCK_X, z0: -17, z1: 4.6 };
+
+/** Parede branca de pé-direito inteiro no lado direito, colada à rampa (placa de setores). */
+export const muralWall = { x: BLOCK_X, z0: 0, z1: 4 };
+/** Saída lateral (lado esquerdo, entre o Auditório e a Secretaria) para fora do prédio. */
+export const sideExit: Rect = { x0: -OUTER_X, x1: -BLOCK_X, z0: 2, z1: 5 };
+
+/** Divisórias internas da Secretaria (local): janelas de atendimento e diretoria. */
+export const SERVICE_LZ = 1.2;
+export const OFFICE_LZ = -2;
+const secretaria = roomById["secretaria"]!;
+
+const hallBand = (x: number, z0: number, z1: number, color: string, tex?: WallTex): Wall => ({
+  x,
+  z: (z0 + z1) / 2,
+  sx: WALL_T,
+  sz: z1 - z0,
+  axis: "z",
+  y0: WALL_H,
+  h: ROOF_Y - WALL_H,
+  color,
+  ...(tex ? { tex } : {}),
+});
+
+const buildingWalls: Wall[] = [
+  // fachada principal em placas quadradas cinza ardósia
+  {
+    x: (-OUTER_X - ENTRANCE_HALF) / 2,
+    z: FACADE_Z,
+    sx: OUTER_X - ENTRANCE_HALF,
+    sz: WALL_T,
+    axis: "x",
+    y0: 0,
+    h: WALL_H,
+    color: "#35393c",
+    tex: "tiles",
+  },
+  {
+    x: (OUTER_X + ENTRANCE_HALF) / 2,
+    z: FACADE_Z,
+    sx: OUTER_X - ENTRANCE_HALF,
+    sz: WALL_T,
+    axis: "x",
+    y0: 0,
+    h: WALL_H,
+    color: "#35393c",
+    tex: "tiles",
+  },
+  // parede branca do chão ao teto, ao lado da rampa (o mural "SAM" foi para o lado da SAÍDA)
+  {
+    x: muralWall.x,
+    z: (muralWall.z0 + muralWall.z1) / 2,
+    sx: WALL_T,
+    sz: muralWall.z1 - muralWall.z0,
+    axis: "z",
+    y0: 0,
+    h: ROOF_Y,
+    color: "#f8fafc",
+  },
+  // bloco fechado atrás do mural (lado de fora)
+  {
+    x: OUTER_X,
+    z: (muralWall.z0 + muralWall.z1) / 2,
+    sx: WALL_T,
+    sz: muralWall.z1 - muralWall.z0,
+    axis: "z",
+    y0: 0,
+    h: WALL_H,
+    color: INNER,
+    tex: "azulejo",
+  },
+  // fechamento alto do pátio coberto: Auditório (placas escuras), acima da saída e da Biblioteca
+  hallBand(-BLOCK_X, sideExit.z1, FACADE_Z, "#35393c", "tiles"),
+  hallBand(-BLOCK_X, sideExit.z0, sideExit.z1, "#f8fafc"),
+  hallBand(BLOCK_X, muralWall.z1, FACADE_Z, "#f8fafc"),
+  // Secretaria: divisória com janelas de atendimento (passagem lateral) …
+  localWall(secretaria, -secretaria.w / 2, 1.6, SERVICE_LZ, SERVICE_LZ),
+  // … e salas da diretoria ao fundo (Direção · Coordenação)
+  localWall(secretaria, -secretaria.w / 2, -2, OFFICE_LZ, OFFICE_LZ),
+  localWall(secretaria, -1, 1, OFFICE_LZ, OFFICE_LZ),
+  localWall(secretaria, 2, secretaria.w / 2, OFFICE_LZ, OFFICE_LZ),
+  localWall(secretaria, 0, 0, -secretaria.d / 2, OFFICE_LZ),
 ];
 
-export const walls: Wall[] = [...rooms.flatMap(roomWalls), ...facadeWalls];
+export const walls: Wall[] = [...rooms.flatMap(roomWalls), ...buildingWalls];
 
-/* Corredores (varandas cobertas) em volta do pátio central --------- */
+/* Rampa vermelha em ziguezague e 2º andar --------------------------- */
 
-export type Rect = { x0: number; x1: number; z0: number; z1: number };
+/**
+ * Rampa de acessibilidade na lateral direita do pátio coberto, em ziguezague:
+ * 1º lance começa voltado para o lado do Auditório (oeste) e sobe para leste,
+ * patamar junto à Biblioteca, 2º lance volta para oeste até a plataforma superior.
+ */
+export const ramp = {
+  a: { x0: 2.5, x1: 9, z0: 6.3, z1: 7.8 },
+  landing: { x0: 9, x1: BLOCK_X, z0: 4.6, z1: 7.8 } as Rect,
+  b: { x0: 2.5, x1: 9, z0: 4.6, z1: 6.1 },
+  /** plataforma no topo, que se liga à passarela */
+  top: { x0: 0.8, x1: 2.5, z0: hall.z0, z1: 6.1 } as Rect,
+};
+export const LANDING_Y = FLOOR2_Y / 2;
 
-export const corridors: Rect[] = [
-  { x0: -15, x1: 15, z0: 9.5, z1: 12 }, // corredor do bloco administrativo
-  { x0: -16, x1: 16, z0: -14.5, z1: -12 }, // corredor da biblioteca/auditório/cantina
-  { x0: -13.5, x1: -11, z0: -12, z1: 9.5 }, // corredor das salas de aula
-  { x0: 11, x1: 13.5, z0: -12, z1: 9.5 }, // corredor dos laboratórios
-  { x0: -3, x1: 3, z0: 12, z1: 18 }, // hall de entrada
+/** Passarela superior (vista para o pátio) que liga a rampa ao corredor do 2º andar. */
+export const bridge: Rect = { x0: -BLOCK_X, x1: ramp.top.x0, z0: hall.z0, z1: sideExit.z0 };
+/** Corredor aberto do 2º andar (sobre o corredor térreo do bloco esquerdo). */
+export const upperCorridor: Rect = { x0: -BLOCK_X, x1: -PATIO_X, z0: -19, z1: sideExit.z0 };
+/** Laje das salas de DS. */
+export const upperRooms: Rect = { x0: -OUTER_X, x1: -BLOCK_X, z0: -19, z1: sideExit.z0 };
+export const GUARD_H = 1.1;
+
+type Surface = { r: Rect; h: (x: number, z: number) => number };
+
+const rampLen = ramp.a.x1 - ramp.a.x0;
+const surfaces: Surface[] = [
+  { r: ramp.a, h: (x) => ((x - ramp.a.x0) / rampLen) * LANDING_Y },
+  { r: ramp.landing, h: () => LANDING_Y },
+  { r: ramp.b, h: (x) => LANDING_Y + ((ramp.b.x1 - x) / rampLen) * LANDING_Y },
+  { r: ramp.top, h: () => FLOOR2_Y },
+  { r: bridge, h: () => FLOOR2_Y },
+  { r: upperCorridor, h: () => FLOOR2_Y },
+  { r: upperRooms, h: () => FLOOR2_Y },
 ];
 
-/** Jardim / área de vivência no centro. */
-export const courtyard: Rect = { x0: -11, x1: 11, z0: -12, z1: 9.5 };
+/**
+ * Altura do piso sob o jogador: a superfície mais alta que ele alcança a partir
+ * de `prevY` (sobe a rampa andando, mas não "pula" para a passarela acima dele).
+ */
+export function floorHeight(x: number, z: number, prevY: number) {
+  let best = 0;
+  for (const s of surfaces) {
+    if (!inRect(s.r, x, z)) continue;
+    const h = Math.min(FLOOR2_Y, Math.max(0, s.h(x, z)));
+    if (h <= prevY + 0.6 && h > best) best = h;
+  }
+  return best;
+}
 
-const MURETA_H = 1;
+/** Pilares vermelhos ao longo dos peitoris do pátio central (z). */
+export const PILLAR_Z_WEST = [-21, -15, -9, -3, 0.2];
+export const PILLAR_Z_EAST = [-17, -11, -6, -1, 4.6];
 
-function withGaps(
-  axis: "x" | "z",
-  fixed: number,
-  from: number,
-  to: number,
-  gaps: [number, number][],
-): Wall[] {
+/** Peitoris vermelhos (h = 1 m) entre os corredores e o pátio central, com passagens. */
+export const PARAPET_H = 1;
+function parapet(x: number, z0: number, z1: number, gaps: [number, number][]): Wall[] {
   const pieces: [number, number][] = [];
-  let start = from;
-  for (const [a, b] of [...gaps].sort((g, h) => g[0] - h[0])) {
+  let start = z0;
+  for (const [a, b] of gaps) {
     if (a > start) pieces.push([start, a]);
     start = b;
   }
-  if (start < to) pieces.push([start, to]);
-  return pieces.map(([a, b]) =>
-    axis === "x"
-      ? { x: (a + b) / 2, z: fixed, sx: b - a, sz: 0.22, axis, color: "#901a1e" }
-      : { x: fixed, z: (a + b) / 2, sx: 0.22, sz: b - a, axis, color: "#901a1e" },
-  );
+  if (start < z1) pieces.push([start, z1]);
+  return pieces.map(([a, b]) => ({
+    x,
+    z: (a + b) / 2,
+    sx: 0.22,
+    sz: b - a,
+    axis: "z" as const,
+    y0: 0,
+    h: PARAPET_H,
+    color: "#901a1e",
+  }));
+}
+export const parapets: Wall[] = [
+  ...parapet(-PATIO_X, BACK_Z, -3.5, [
+    [-18.8, -17.2],
+    [-12.8, -11.2],
+    [-6.8, -5.2],
+  ]),
+  ...parapet(PATIO_X, -17, -1.5, [
+    [-13.3, -11.7],
+    [-8.8, -7.2],
+  ]),
+];
+
+function bar(x0: number, x1: number, z0: number, z1: number, y0 = -1, h = 10): Wall {
+  return {
+    x: (x0 + x1) / 2,
+    z: (z0 + z1) / 2,
+    sx: x1 - x0,
+    sz: z1 - z0,
+    axis: x1 - x0 >= z1 - z0 ? "x" : "z",
+    y0,
+    h,
+    color: "#901a1e",
+  };
 }
 
-/** Muretas entre corredor e jardim (com passagens). */
-export const muretas: Wall[] = [
-  ...withGaps("x", 9.5, -11, 11, [
-    [-1.4, 1.4],
-    [-8, -6],
-    [6, 8],
-  ]),
-  ...withGaps("x", -12, -11, 11, [
-    [-1.4, 1.4],
-    [-8, -6],
-    [6, 8],
-  ]),
-  ...withGaps("z", -11, -12, 9.5, [[-2.6, -0.6]]),
-  ...withGaps("z", 11, -12, 9.5, [[-2.6, -0.6]]),
+const UP = { y0: FLOOR2_Y - 0.6, h: 4 };
+const T = 0.1;
+/** Barreiras de colisão sem parede própria (o desenho fica em SchoolWorld). */
+export const barriers: Wall[] = [
+  // ziguezague: lateral sul do 1º lance/patamar, divisória entre os lances, lateral norte
+  bar(ramp.a.x0, BLOCK_X, ramp.a.z1, ramp.a.z1 + T),
+  bar(ramp.a.x0, ramp.a.x1, ramp.b.z1, ramp.a.z0),
+  bar(ramp.b.x0, BLOCK_X, ramp.b.z0 - T, ramp.b.z0),
+  // ponta do 2º lance (maciço até o chão) para quem está no térreo
+  bar(ramp.b.x0 - T, ramp.b.x0, ramp.b.z0, ramp.b.z1, -1, FLOOR2_Y - 0.6),
+  // guarda-corpos da plataforma, da passarela e do corredor superior
+  bar(ramp.top.x1, ramp.top.x1 + T, ramp.top.z0, ramp.b.z0, UP.y0, UP.h),
+  bar(ramp.top.x0, ramp.top.x1, ramp.top.z1, ramp.top.z1 + T, UP.y0, UP.h),
+  bar(ramp.top.x0 - T, ramp.top.x0, bridge.z1, ramp.top.z1, UP.y0, UP.h),
+  bar(bridge.x0, ramp.top.x0, bridge.z1, bridge.z1 + T, UP.y0, UP.h),
+  bar(-PATIO_X, ramp.top.x1, bridge.z0 - T, bridge.z0, UP.y0, UP.h),
+  bar(-PATIO_X, -PATIO_X + T, upperCorridor.z0, bridge.z0, UP.y0, UP.h),
+  bar(upperCorridor.x0, upperCorridor.x1, upperCorridor.z0 - T, upperCorridor.z0, UP.y0, UP.h),
+  // pilares do pátio coberto da entrada
+  ...[-5.5, 5.5].map((x) => bar(x - 0.2, x + 0.2, 10.8, 11.2, -1, 3)),
 ];
-export const MURETA_HEIGHT = MURETA_H;
-
-/** Pilares da cobertura dos corredores. */
-export const pillars: [number, number][] = muretas.flatMap((m) => {
-  const half = m.axis === "x" ? m.sx / 2 : m.sz / 2;
-  const ends: [number, number][] =
-    m.axis === "x"
-      ? [
-          [m.x - half, m.z],
-          [m.x + half, m.z],
-        ]
-      : [
-          [m.x, m.z - half],
-          [m.x, m.z + half],
-        ];
-  return ends;
-});
-
-const solid: Wall[] = [...walls, ...muretas];
 
 /** Limites da escola (muro). */
-export const bounds = { x0: -24, x1: 24, z0: -41, z1: 29 };
+export const bounds = { x0: -20, x1: 20, z0: -35, z1: 22.5 };
 
-export const spawn: [number, number] = [0, 26];
+export const spawn: [number, number] = [0, 20.5];
 
-/** Arco da placa "PORTARIA · ENTRADA" (entre o portão e o hall). */
-export const portaria = { x: 0, z: 18 };
+/** Entrada (sem guarita): ponto onde o guia faz a pergunta. */
+export const portaria = { x: 0, z: FACADE_Z };
 
-/** O jogador passou pela portaria vindo do portão. */
+/** O jogador chegou à Entrada vindo do portão. */
 export function atPortaria(x: number, z: number) {
   return Math.abs(x - portaria.x) < 3.2 && z < portaria.z + 0.8 && z > portaria.z - 4;
 }
 
-/** Resolve colisão de um círculo contra as paredes (in-place). */
-export function collide(pos: { x: number; z: number }, radius = 0.3) {
+const solid: Wall[] = [...walls, ...parapets, ...barriers];
+
+/** Resolve colisão de um círculo contra as paredes na altura do jogador (in-place). */
+export function collide(pos: { x: number; z: number; y?: number }, radius = 0.3) {
+  const y = pos.y ?? 0;
   for (const wall of solid) {
+    if (y < wall.y0 - 0.6 || y >= wall.y0 + wall.h - 0.2) continue;
     const minX = wall.x - wall.sx / 2;
     const maxX = wall.x + wall.sx / 2;
     const minZ = wall.z - wall.sz / 2;
@@ -470,7 +755,7 @@ export type Mission =
     };
 
 /**
- * Ordem da trilha: o guia Chrystian começa pelas salas de DS.
+ * Ordem da trilha: o guia Chrystian começa pelas salas de DS (2º andar).
  * Os laboratórios não têm missão: são só exploração (veja `labInfo`).
  */
 export const missions: Mission[] = [
@@ -480,7 +765,7 @@ export const missions: Mission[] = [
     type: "reflection",
     title: "1º ano · Adaptação e fundamentos",
     intro:
-      "Esta é a sala do 1º ano de DS! A professora Clara Mendes e a turma (Vitor, Rikelme, Miguel, Izabely e Ray) estão começando a jornada: adaptação ao tempo integral e os fundamentos da programação.",
+      "Esta é a sala 1º Desenvolvimento, no 2º andar! A professora Clara Mendes e a turma (Vitor, Rikelme, Miguel, Izabely e Ray) estão começando a jornada: adaptação ao tempo integral e os fundamentos da programação.",
     question: "Qual sua expectativa para o primeiro ano no curso de DS?",
   },
   {
@@ -489,7 +774,7 @@ export const missions: Mission[] = [
     type: "reflection",
     title: "2º ano · Prática técnica e grupos do ENEM",
     intro:
-      "Na sala do 2º ano, o professor Natan e a turma (Aloson, Viny, Vinícius, Bia e Kaio) intensificam a prática técnica e começam a preparação para o ENEM.",
+      "Na sala 2º Desenvolvimento, o professor Natan e a turma (Aloson, Viny, Vinícius, Bia e Kaio) intensificam a prática técnica e começam a preparação para o ENEM.",
     question: "Qual sua expectativa para o 2º ano de Desenvolvimento de Sistemas na EEEP SAM?",
   },
   {
@@ -498,9 +783,21 @@ export const missions: Mission[] = [
     type: "reflection",
     title: "3º ano · Reta final: ENEM, estágio e Expotec",
     intro:
-      "No 3º ano, o professor Antoine e a turma (Waldemiro, Devid, Felipe, Dailane e Fernanda) estão na reta final: ENEM, estágio e Expotec!",
+      "Na sala 3º Desenvolvimento, o professor Antoine e a turma (Waldemiro, Devid, Felipe, Dailane e Fernanda) estão na reta final: ENEM, estágio e Expotec!",
     question:
       "Qual sua expectativa para o 3º ano de Desenvolvimento de Sistemas na EEEP SAM (ENEM, estágio e Expotec)?",
+  },
+  {
+    id: "m-secretaria",
+    room: "secretaria",
+    type: "collect",
+    title: "A ficha de matrícula",
+    intro:
+      "A secretária precisa de uma ficha de matrícula que ficou esquecida perto das cadeiras de espera. Encontre-a e entregue no balcão!",
+    item: "document",
+    itemName: "Ficha de matrícula",
+    at: [-2.2, 3.4],
+    success: "Ficha entregue! A Secretaria agradece a ajuda.",
   },
   {
     id: "m-professores",
@@ -671,24 +968,24 @@ export const labInfo: Record<string, { intro: string; sections: Topic[] }> = {
       },
     ],
   },
-  matematica: {
-    intro: "Um espaço para aprender Matemática colocando a mão na massa.",
+  ciencias: {
+    intro: "Química, Biologia e Física saem do livro e viram experimento.",
     sections: [
       {
         name: "Como funciona",
-        text: "As aulas usam materiais concretos e atividades em grupo para tornar visíveis conceitos que, no caderno, parecem abstratos.",
+        text: "Em grupos, nas bancadas, a turma realiza experimentos guiados pelo professor, sempre com jaleco, óculos e as normas de segurança.",
       },
       {
         name: "Infraestrutura",
-        text: "Mesas para trabalho em grupo, sólidos geométricos, jogos matemáticos, calculadoras, réguas e instrumentos de medida e um quadro para resolver problemas juntos.",
+        text: "Bancadas com pias, vidrarias (béqueres, tubos de ensaio, erlenmeyers), microscópios, modelos anatômicos, kits de Física e a tabela periódica na parede.",
       },
       {
         name: "Nas aulas do curso técnico",
-        text: "O raciocínio lógico e a matemática são a base dos algoritmos; estatística e porcentagem ajudam a entender e analisar dados nos sistemas.",
+        text: "Método científico, levantamento de hipóteses e registro de resultados: o mesmo raciocínio usado para testar e depurar sistemas.",
       },
       {
         name: "Na base comum",
-        text: "Geometria, funções e resolução de problemas, além dos Grupos de Estudo de Matemática para o ENEM e o SPAECE.",
+        text: "Aulas práticas de Química, Biologia e Física, que ajudam a entender os conteúdos cobrados no ENEM.",
       },
     ],
   },
