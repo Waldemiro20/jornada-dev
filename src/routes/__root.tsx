@@ -80,7 +80,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     // twitter:image here: every page without its own would inherit the root's preview image.
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      {
+        name: "viewport",
+        content:
+          "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover",
+      },
       { title: "Jornada EEEP" },
       { name: "description", content: "RPG interativo de Desenvolvimento de Sistemas — Expotec" },
       { property: "og:type", content: "website" },
@@ -89,7 +93,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500&family=Space+Grotesk:wght@500;700&display=swap" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500&family=Space+Grotesk:wght@500;700&display=swap",
+      },
       {
         rel: "stylesheet",
         href: appCss,

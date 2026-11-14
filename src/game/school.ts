@@ -10,11 +10,13 @@
  *       parede azul do mural "SAM", com placa de setores e pingue-pongue.
  *       Direita: Biblioteca (janela vertical e letreiro vertical) e a rampa
  *       vermelha de acessibilidade que leva ao 2º andar.
- *   - Pátio central descoberto e arborizado entre os dois blocos.
+ *   - Pátio central arborizado entre os dois blocos; a cobertura metálica cobre a escola
+ *     inteira e só fica aberta a claraboia central, sobre os canteiros.
  *       Bloco esquerdo: Secretaria, Sala dos Professores, Laboratório de
  *       Línguas e Laboratório de Informática.
  *       Bloco direito: Laboratório de Química, Biologia e Física e Sanitários.
- *   - Fundo: Refeitório e Quadra poliesportiva.
+ *   - Fundo: Quadra poliesportiva em ginásio fechado (esquerda) e Refeitório
+ *     aberto nas laterais (direita), ligados por um passeio coberto.
  *  2º andar (sobre o bloco esquerdo)
  *   - Corredor aberto com vista para o pátio central e as salas
  *     "1º Desenvolvimento", "2º Desenvolvimento" e "3º Desenvolvimento".
@@ -57,8 +59,10 @@ export type Room = {
   reliefSign?: boolean;
   /** revestimento das paredes (padrão: azulejo) */
   wallTex?: WallTex;
-  /** false = espaço aberto, sem paredes (quadra) */
+  /** false = espaço aberto, sem paredes (refeitório arejado) */
   walls?: boolean;
+  /** pé-direito próprio (ex.: ginásio); padrão WALL_H / WALL_H2 */
+  wallH?: number;
   /** 0 = térreo, 1 = 2º andar */
   level?: Level;
   floor: string;
@@ -72,6 +76,8 @@ export const FLOOR2_Y = 3.2;
 /** Pé-direito das paredes do térreo e do 2º andar. */
 export const WALL_H = 3;
 export const WALL_H2 = 2.8;
+/** Pé-direito do ginásio (paredes até a cobertura metálica). */
+export const COURT_H = 7.6;
 /** Abaixo disso o jogador está no térreo; acima, no 2º andar. */
 export const LEVEL_SPLIT = FLOOR2_Y / 2;
 
@@ -82,6 +88,7 @@ export const BLOCK_X = 10.5; // fachada dos blocos voltada para os corredores
 export const OUTER_X = 18.5; // paredes externas laterais
 export const PATIO_X = 7.5; // borda do pátio central (peitoris)
 export const BACK_Z = -21; // fundo dos blocos
+export const SCHOOL_BACK_Z = -36.5; // muro do fundo (a cobertura vai até ele)
 
 const LEFT_X = -(BLOCK_X + OUTER_X) / 2;
 const RIGHT_X = (BLOCK_X + OUTER_X) / 2;
@@ -129,7 +136,7 @@ export const rooms: Room[] = [
     door: "e",
     floor: "#e7e5e4",
     accent: "#166534",
-    board: "Projeto Final · Expotec",
+    board: "Estágio · Projeto Social",
   },
 
   /* ---------------- Térreo: entrada ---------------- */
@@ -138,8 +145,9 @@ export const rooms: Room[] = [
     name: "Auditório",
     kind: "auditorium",
     x: LEFT_X,
-    z: 9.5,
-    w: 9,
+    // vai da Secretaria (z = 2) até a fachada: parede lateral fechada, sem saída
+    z: 8,
+    w: 12,
     d: BLOCK_D,
     door: "e",
     doorW: 2.4,
@@ -148,7 +156,7 @@ export const rooms: Room[] = [
     wallTex: "tiles",
     floor: "#57534e",
     accent: "#901a1e",
-    board: "EXPOTEC",
+    board: "AUDITÓRIO",
   },
   {
     id: "biblioteca",
@@ -203,9 +211,10 @@ export const rooms: Room[] = [
     w: 6,
     d: BLOCK_D,
     door: "e",
-    floor: "#e2e8f0",
-    accent: "#dc2626",
-    board: "HELLO · HOLA",
+    // funciona como um 2º Laboratório de Informática: mesmo piso, cores e equipamentos
+    floor: "#cbd5e1",
+    accent: "#2563eb",
+    board: "LAB. DE LÍNGUAS",
   },
   {
     id: "informatica",
@@ -266,12 +275,14 @@ export const rooms: Room[] = [
     id: "cantina",
     name: "Refeitório",
     kind: "canteen",
-    x: -8.5,
-    z: -25,
+    // lado direito do fundo, aberto nas laterais (ventilação), sob a cobertura geral
+    x: 8.5,
+    z: -27.5,
     w: 15,
     d: 7,
     door: "s",
     doorW: 3.2,
+    walls: false,
     floor: "#e8e1d5",
     accent: "#ea580c",
     board: "CARDÁPIO DO DIA",
@@ -280,12 +291,17 @@ export const rooms: Room[] = [
     id: "quadra",
     name: "Quadra Poliesportiva",
     kind: "court",
-    x: 10,
-    z: -27.5,
+    // lado esquerdo do fundo: ginásio totalmente fechado, com cobertura metálica.
+    // Recuado: a fachada fica em z = -24, 3 m depois do fim dos corredores (BACK_Z).
+    x: -10,
+    z: -29.5,
     w: 16,
     d: 11,
     door: "s",
-    walls: false,
+    // entrada ampla e desobstruída (sem pilar no vão)
+    doorW: 4.8,
+    wallH: COURT_H,
+    wallTex: "facade",
     floor: "#0f766e",
     accent: "#facc15",
   },
@@ -313,7 +329,7 @@ export const doorAngle: Record<DoorSide, number> = {
 export const roomLevel = (room: Room): Level => room.level ?? 0;
 /** Altura do piso da sala. */
 export const roomY = (room: Room) => (roomLevel(room) === 1 ? FLOOR2_Y : 0);
-export const roomWallH = (room: Room) => (roomLevel(room) === 1 ? WALL_H2 : WALL_H);
+export const roomWallH = (room: Room) => room.wallH ?? (roomLevel(room) === 1 ? WALL_H2 : WALL_H);
 export const levelOf = (y: number): Level => (y >= LEVEL_SPLIT ? 1 : 0);
 
 /** Tamanho no mundo (eixo x, eixo z). */
@@ -462,13 +478,66 @@ export const corridorEast: Rect = { x0: PATIO_X, x1: BLOCK_X, z0: -17, z1: 4.6 }
 
 /** Parede branca de pé-direito inteiro no lado direito, colada à rampa (placa de setores). */
 export const muralWall = { x: BLOCK_X, z0: 0, z1: 4 };
-/** Saída lateral (lado esquerdo, entre o Auditório e a Secretaria) para fora do prédio. */
-export const sideExit: Rect = { x0: -OUTER_X, x1: -BLOCK_X, z0: 2, z1: 5 };
+/** Limite sul do bloco esquerdo do 2º andar (encontro da Secretaria com o Auditório). */
+export const AUDITORIUM_Z0 = 2;
+/** Parede de ligação entre o Auditório e a porta da Secretaria. */
+export const samWall = { x: -BLOCK_X, z0: 0, z1: AUDITORIUM_Z0 };
+/**
+ * Painel do mural "SAM": de frente para a entrada (voltado para +z), no plano das duas colunas
+ * vermelhas — a do pátio junto ao Auditório (x = -BLOCK_X + 0.3) e o pilar do corredor do
+ * 2º andar (x = -PATIO_X) —, encaixado no vão livre entre elas.
+ */
+export const samMural = {
+  x0: -BLOCK_X + 0.3 + 0.18 + 0.02, // face da coluna do pátio
+  x1: -PATIO_X - 0.17 - 0.02, // face do pilar do corredor do 2º andar
+  z: 0.2,
+};
+
+/**
+ * Placa vermelha de setores sobre mureta branca, no chão, encostada na parte inferior
+ * direita do mural "SAM" (voltada para a entrada).
+ */
+// ao lado do mural (à direita do pilar do corredor do 2º andar), sem tapar o painel nem a passagem
+export const directorySign = {
+  x: -PATIO_X + 0.17 + 1.4 + 0.6, // 1,4 m livres junto ao pilar (passagem para o corredor)
+  z: samMural.z + 0.45,
+  w: 1.2,
+  d: 0.45,
+};
+
+/** Passeio coberto no fundo (folga entre os corredores e a Quadra/Refeitório). */
+export const backWalkway: Rect = { x0: -OUTER_X, x1: OUTER_X, z0: -24, z1: BACK_Z };
+/** Pilares do passeio coberto: fora do vão da Quadra (x -12,4…-7,6) e do centro. */
+export const WALKWAY_PILLARS_X = [-OUTER_X + 0.3, -14.5, -5, 5, 14.5, OUTER_X - 0.3];
+export const WALKWAY_PILLAR_Z = (backWalkway.z0 + backWalkway.z1) / 2;
+
+/** Cobertura metálica geral: da fachada até o muro do fundo, de lado a lado. */
+export const roofCover: Rect = {
+  x0: -OUTER_X - 0.3,
+  x1: OUTER_X + 0.3,
+  z0: SCHOOL_BACK_Z,
+  z1: FACADE_Z + 0.3,
+};
+/** Única abertura da cobertura: claraboia sobre os canteiros e vasos do pátio central. */
+export const skylight: Rect = { x0: -6.8, x1: 6.8, z0: -19.8, z1: -1.4 };
+/** Colunas vinho que sustentam a cobertura junto ao muro do fundo (fora das passagens). */
+export const ROOF_COLUMNS: [number, number][] = [-OUTER_X + 0.3, -0.5, OUTER_X - 0.3].map((x) => [
+  x,
+  SCHOOL_BACK_Z + 0.4,
+]);
 
 /** Divisórias internas da Secretaria (local): janelas de atendimento e diretoria. */
 export const SERVICE_LZ = 1.2;
 export const OFFICE_LZ = -2;
 const secretaria = roomById["secretaria"]!;
+const cantina = roomById["cantina"]!;
+/** Pilares do Refeitório aberto (frente e fundo), em coordenadas locais. */
+export const CANTEEN_PILLARS: [number, number][] = [-1, -0.5, 0.5, 1].flatMap((f) =>
+  [-1, 1].map(
+    (side) =>
+      [(f * cantina.w) / 2 - Math.sign(f) * 0.2, side * (cantina.d / 2 - 0.2)] as [number, number],
+  ),
+);
 
 const hallBand = (x: number, z0: number, z1: number, color: string, tex?: WallTex): Wall => ({
   x,
@@ -482,31 +551,26 @@ const hallBand = (x: number, z0: number, z1: number, color: string, tex?: WallTe
   ...(tex ? { tex } : {}),
 });
 
+const facadeWall = (x0: number, x1: number, color: string, tex: WallTex): Wall => ({
+  x: (x0 + x1) / 2,
+  z: FACADE_Z,
+  sx: x1 - x0,
+  sz: WALL_T,
+  axis: "x",
+  y0: 0,
+  h: WALL_H,
+  color,
+  tex,
+});
+
 const buildingWalls: Wall[] = [
-  // fachada principal em placas quadradas cinza ardósia
-  {
-    x: (-OUTER_X - ENTRANCE_HALF) / 2,
-    z: FACADE_Z,
-    sx: OUTER_X - ENTRANCE_HALF,
-    sz: WALL_T,
-    axis: "x",
-    y0: 0,
-    h: WALL_H,
-    color: "#35393c",
-    tex: "tiles",
-  },
-  {
-    x: (OUTER_X + ENTRANCE_HALF) / 2,
-    z: FACADE_Z,
-    sx: OUTER_X - ENTRANCE_HALF,
-    sz: WALL_T,
-    axis: "x",
-    y0: 0,
-    h: WALL_H,
-    color: "#35393c",
-    tex: "tiles",
-  },
-  // parede branca do chão ao teto, ao lado da rampa (o mural "SAM" foi para o lado da SAÍDA)
+  // fachada: parede externa do Auditório em placas quadradas cinza ardósia …
+  facadeWall(-OUTER_X, -BLOCK_X, "#35393c", "tiles"),
+  // … e a Entrada (e a frente da Biblioteca) em branco com faixas verde-bandeira
+  facadeWall(-BLOCK_X, -ENTRANCE_HALF, "#f8fafc", "facade"),
+  facadeWall(ENTRANCE_HALF, BLOCK_X, "#f8fafc", "facade"),
+  facadeWall(BLOCK_X, OUTER_X, "#f8fafc", "facade"),
+  // parede branca do chão ao teto, ao lado da rampa (o mural "SAM" fica ao lado do Auditório)
   {
     x: muralWall.x,
     z: (muralWall.z0 + muralWall.z1) / 2,
@@ -529,10 +593,20 @@ const buildingWalls: Wall[] = [
     color: INNER,
     tex: "azulejo",
   },
-  // fechamento alto do pátio coberto: Auditório (placas escuras), acima da saída e da Biblioteca
-  hallBand(-BLOCK_X, sideExit.z1, FACADE_Z, "#35393c", "tiles"),
-  hallBand(-BLOCK_X, sideExit.z0, sideExit.z1, "#f8fafc"),
+  // fechamento alto do pátio coberto: Auditório (placas escuras) e Biblioteca
+  hallBand(-BLOCK_X, AUDITORIUM_Z0, FACADE_Z, "#35393c", "tiles"),
   hallBand(BLOCK_X, muralWall.z1, FACADE_Z, "#f8fafc"),
+  // painel do mural "SAM" entre as colunas vermelhas, de frente para a entrada
+  {
+    x: (samMural.x0 + samMural.x1) / 2,
+    z: samMural.z,
+    sx: samMural.x1 - samMural.x0,
+    sz: WALL_T,
+    axis: "x",
+    y0: 0,
+    h: WALL_H,
+    color: "#1d4ed8",
+  },
   // Secretaria: divisória com janelas de atendimento (passagem lateral) …
   localWall(secretaria, -secretaria.w / 2, 1.6, SERVICE_LZ, SERVICE_LZ),
   // … e salas da diretoria ao fundo (Direção · Coordenação)
@@ -540,6 +614,8 @@ const buildingWalls: Wall[] = [
   localWall(secretaria, -1, 1, OFFICE_LZ, OFFICE_LZ),
   localWall(secretaria, 2, secretaria.w / 2, OFFICE_LZ, OFFICE_LZ),
   localWall(secretaria, 0, 0, -secretaria.d / 2, OFFICE_LZ),
+  // Refeitório: só a parede da cozinha ao fundo (laterais abertas para ventilação)
+  localWall(cantina, -cantina.w / 2, cantina.w / 2, -cantina.d / 2, -cantina.d / 2),
 ];
 
 export const walls: Wall[] = [...rooms.flatMap(roomWalls), ...buildingWalls];
@@ -561,11 +637,11 @@ export const ramp = {
 export const LANDING_Y = FLOOR2_Y / 2;
 
 /** Passarela superior (vista para o pátio) que liga a rampa ao corredor do 2º andar. */
-export const bridge: Rect = { x0: -BLOCK_X, x1: ramp.top.x0, z0: hall.z0, z1: sideExit.z0 };
+export const bridge: Rect = { x0: -BLOCK_X, x1: ramp.top.x0, z0: hall.z0, z1: AUDITORIUM_Z0 };
 /** Corredor aberto do 2º andar (sobre o corredor térreo do bloco esquerdo). */
-export const upperCorridor: Rect = { x0: -BLOCK_X, x1: -PATIO_X, z0: -19, z1: sideExit.z0 };
+export const upperCorridor: Rect = { x0: -BLOCK_X, x1: -PATIO_X, z0: -19, z1: AUDITORIUM_Z0 };
 /** Laje das salas de DS. */
-export const upperRooms: Rect = { x0: -OUTER_X, x1: -BLOCK_X, z0: -19, z1: sideExit.z0 };
+export const upperRooms: Rect = { x0: -OUTER_X, x1: -BLOCK_X, z0: -19, z1: AUDITORIUM_Z0 };
 export const GUARD_H = 1.1;
 
 type Surface = { r: Rect; h: (x: number, z: number) => number };
@@ -597,7 +673,8 @@ export function floorHeight(x: number, z: number, prevY: number) {
 
 /** Pilares vermelhos ao longo dos peitoris do pátio central (z). */
 export const PILLAR_Z_WEST = [-21, -15, -9, -3, 0.2];
-export const PILLAR_Z_EAST = [-17, -11, -6, -1, 4.6];
+// (sem pilar em z = 4,6: ele atravessaria o 2º lance da rampa como um poste solto)
+export const PILLAR_Z_EAST = [-17, -11, -6, -1];
 
 /** Peitoris vermelhos (h = 1 m) entre os corredores e o pátio central, com passagens. */
 export const PARAPET_H = 1;
@@ -665,10 +742,28 @@ export const barriers: Wall[] = [
   bar(upperCorridor.x0, upperCorridor.x1, upperCorridor.z0 - T, upperCorridor.z0, UP.y0, UP.h),
   // pilares do pátio coberto da entrada
   ...[-5.5, 5.5].map((x) => bar(x - 0.2, x + 0.2, 10.8, 11.2, -1, 3)),
+  // placa de setores (mureta) diante do mural "SAM"
+  bar(
+    directorySign.x - directorySign.w / 2,
+    directorySign.x + directorySign.w / 2,
+    directorySign.z - directorySign.d / 2,
+    directorySign.z + directorySign.d / 2,
+    -1,
+    2,
+  ),
+  // pilares do Refeitório aberto e do passeio coberto do fundo
+  ...CANTEEN_PILLARS.map(([lx, lz]) => {
+    const [x, z] = toWorld(cantina, lx, lz);
+    return bar(x - 0.15, x + 0.15, z - 0.15, z + 0.15, -1, 4);
+  }),
+  ...WALKWAY_PILLARS_X.map((x) =>
+    bar(x - 0.18, x + 0.18, WALKWAY_PILLAR_Z - 0.18, WALKWAY_PILLAR_Z + 0.18, -1, 4),
+  ),
+  ...ROOF_COLUMNS.map(([x, z]) => bar(x - 0.18, x + 0.18, z - 0.18, z + 0.18, -1, 4)),
 ];
 
 /** Limites da escola (muro). */
-export const bounds = { x0: -20, x1: 20, z0: -35, z1: 22.5 };
+export const bounds = { x0: -20, x1: 20, z0: SCHOOL_BACK_Z, z1: 22.5 };
 
 export const spawn: [number, number] = [0, 20.5];
 
@@ -723,15 +818,25 @@ export type CollectItem = "document" | "book" | "diary" | "ram" | "ball" | "cabl
 
 export type Mission =
   | {
+      /** Parada da trilha guiada: card explicativo curto ao chegar no local. */
       id: string;
+      /** sala de referência (mapa); o nome mostrado é o `title` */
       room: string;
-      type: "quiz";
+      type: "visit";
       title: string;
       intro: string;
-      question: string;
-      options: string[];
-      answer: number;
-      explanation: string;
+      /** foto exibida no card (ex.: equipe da escola) */
+      image?: string;
+      /** texto do botão de continuar */
+      button?: string;
+    }
+  | {
+      /** Sala de DS: conteúdo do ano (em cima) + pergunta aberta de expectativas (embaixo). */
+      id: string;
+      room: string;
+      type: "expect";
+      title: string;
+      intro: string;
     }
   | {
       id: string;
@@ -744,229 +849,354 @@ export type Mission =
       /** posição local na sala (porta em +z) */
       at: [number, number];
       success: string;
-    }
-  | {
-      id: string;
-      room: string;
-      type: "reflection";
-      title: string;
-      intro: string;
-      question: string;
     };
-
-/**
- * Ordem da trilha: o guia Chrystian começa pelas salas de DS (2º andar).
- * Os laboratórios não têm missão: são só exploração (veja `labInfo`).
- */
-export const missions: Mission[] = [
-  {
-    id: "m-sala1",
-    room: "sala1",
-    type: "reflection",
-    title: "1º ano · Adaptação e fundamentos",
-    intro:
-      "Esta é a sala 1º Desenvolvimento, no 2º andar! A professora Clara Mendes e a turma (Vitor, Rikelme, Miguel, Izabely e Ray) estão começando a jornada: adaptação ao tempo integral e os fundamentos da programação.",
-    question: "Qual sua expectativa para o primeiro ano no curso de DS?",
-  },
-  {
-    id: "m-sala2",
-    room: "sala2",
-    type: "reflection",
-    title: "2º ano · Prática técnica e grupos do ENEM",
-    intro:
-      "Na sala 2º Desenvolvimento, o professor Natan e a turma (Aloson, Viny, Vinícius, Bia e Kaio) intensificam a prática técnica e começam a preparação para o ENEM.",
-    question: "Qual sua expectativa para o 2º ano de Desenvolvimento de Sistemas na EEEP SAM?",
-  },
-  {
-    id: "m-sala3",
-    room: "sala3",
-    type: "reflection",
-    title: "3º ano · Reta final: ENEM, estágio e Expotec",
-    intro:
-      "Na sala 3º Desenvolvimento, o professor Antoine e a turma (Waldemiro, Devid, Felipe, Dailane e Fernanda) estão na reta final: ENEM, estágio e Expotec!",
-    question:
-      "Qual sua expectativa para o 3º ano de Desenvolvimento de Sistemas na EEEP SAM (ENEM, estágio e Expotec)?",
-  },
-  {
-    id: "m-secretaria",
-    room: "secretaria",
-    type: "collect",
-    title: "A ficha de matrícula",
-    intro:
-      "A secretária precisa de uma ficha de matrícula que ficou esquecida perto das cadeiras de espera. Encontre-a e entregue no balcão!",
-    item: "document",
-    itemName: "Ficha de matrícula",
-    at: [-2.2, 3.4],
-    success: "Ficha entregue! A Secretaria agradece a ajuda.",
-  },
-  {
-    id: "m-professores",
-    room: "professores",
-    type: "collect",
-    title: "O diário perdido",
-    intro: "Um professor esqueceu o diário de classe em algum lugar da sala. Encontre-o!",
-    item: "diary",
-    itemName: "Diário de classe",
-    at: [-1.9, -1.8],
-    success: "Diário entregue! Os professores agradecem a ajuda.",
-  },
-  {
-    id: "m-biblioteca",
-    room: "biblioteca",
-    type: "collect",
-    title: "O livro de lógica",
-    intro: "Encontre o livro “Lógica de Programação” nas estantes da biblioteca.",
-    item: "book",
-    itemName: "Livro de Lógica de Programação",
-    at: [2.6, -2.4],
-    success: "Livro emprestado! Lembre-se de devolver no prazo.",
-  },
-  {
-    id: "m-cantina",
-    room: "cantina",
-    type: "quiz",
-    title: "Hora do almoço",
-    intro: "Em tempo integral, alimentação é energia para estudar a tarde toda.",
-    question: "Qual prato é mais equilibrado para o almoço?",
-    options: [
-      "Arroz, feijão, salada e frango",
-      "Só refrigerante e salgadinho",
-      "Apenas doces",
-      "Ficar sem almoçar",
-    ],
-    answer: 0,
-    explanation: "Um prato com carboidrato, proteína, leguminosas e verduras mantém a energia.",
-  },
-  {
-    id: "m-auditorio",
-    room: "auditorio",
-    type: "quiz",
-    title: "Palco da Expotec",
-    intro: "O auditório recebe palestras, formaturas e a Expotec.",
-    question: "O que é a Expotec?",
-    options: [
-      "Feira onde os alunos apresentam seus projetos técnicos",
-      "Uma prova de recuperação",
-      "Um jogo de futebol",
-      "A reunião de pais",
-    ],
-    answer: 0,
-    explanation:
-      "Na Expotec os cursos técnicos mostram à comunidade os projetos criados pelos alunos.",
-  },
-  {
-    id: "m-quadra",
-    room: "quadra",
-    type: "collect",
-    title: "Intervalo na quadra",
-    intro: "A turma vai jogar no intervalo. Pegue a bola no meio da quadra!",
-    item: "ball",
-    itemName: "Bola",
-    at: [0, 0],
-    success: "Bola pega! Esporte também faz parte da formação.",
-  },
-];
-
-export const missionByRoom = Object.fromEntries(missions.map((m) => [m.room, m])) as Record<
-  string,
-  Mission
->;
-
-export const XP_PER_MISSION = 100;
-export const XP_FIRST_TRY_BONUS = 50;
-
-/* ------------------------------------------------------------------ */
-/* Rota "curso": conteúdos das salas de DS, quiz e ranking             */
-/* ------------------------------------------------------------------ */
 
 export type Route = "escola" | "curso";
 
-/** Salas visitadas na rota do curso, em ordem. */
+/** Salas de Desenvolvimento, em ordem (1º, 2º e 3º ano). */
 export const COURSE_ROOMS = ["sala1", "sala2", "sala3"] as const;
 
-export type Topic = { name: string; text: string };
+const expectMissions = (prefix: string, titles: [string, string, string]): Mission[] =>
+  COURSE_ROOMS.map((room, i) => ({
+    id: `${prefix}-${room}`,
+    room,
+    type: "expect" as const,
+    title: titles[i]!,
+    intro: `Suba a rampa e entre na sala ${i + 1}º Desenvolvimento, no 2º andar.`,
+  }));
 
-/** O que o modal de cada sala de DS apresenta, com um destaque do ano. */
-export const courseContent: Record<string, { year: string; topics: Topic[]; highlight?: Topic }> = {
+/**
+ * MODO "Conhecer a Escola": tour automático (o personagem anda sozinho) nesta ordem:
+ * Auditório → Sala dos Professores → Laboratório de Línguas → Quadra → quadro da Equipe SAM
+ * (junto à rampa) → salas do 1º, 2º e 3º Desenvolvimento. Sem quiz: ao terminar a sala do
+ * 3º ano, a visita é concluída.
+ */
+export const schoolTour: Mission[] = [
+  {
+    id: "v-auditorio",
+    room: "auditorio",
+    type: "visit",
+    title: "Auditório",
+    intro:
+      "O espaço de encontros da escola: aqui acontecem palestras, reuniões gerais, eventos culturais, apresentações de trabalhos e as cerimônias da EEEP.",
+  },
+  {
+    id: "v-professores",
+    room: "professores",
+    type: "visit",
+    title: "Sala dos Professores",
+    intro:
+      "Aqui os professores planejam as aulas, corrigem atividades e atendem os alunos e as famílias.",
+  },
+  {
+    id: "v-linguas",
+    room: "linguas",
+    type: "visit",
+    title: "Laboratório de Línguas / Informática",
+    intro:
+      "Apesar do nome, o Laboratório de Línguas funciona como um laboratório completo de computadores, igual ao Laboratório de Informática: aulas práticas do curso técnico, pesquisas e estudos. Só o nome na placa muda.",
+  },
+  {
+    id: "v-quadra",
+    room: "quadra",
+    type: "visit",
+    title: "Quadra Poliesportiva",
+    intro:
+      "A quadra é utilizada para as aulas práticas de Educação Física: aqui os alunos colocam em prática os conteúdos esportivos e as atividades físicas, e a escola realiza seus eventos esportivos, como os jogos interclasse.",
+  },
+  {
+    id: "v-equipe",
+    room: "biblioteca",
+    type: "visit",
+    title: "Equipe SAM",
+    intro:
+      "Este quadro, na parede junto à rampa, apresenta a Equipe SAM: professores, coordenadores e todos os profissionais da EEEP Dr. Salomão Alves de Moura, que apoiam, orientam e acompanham os estudantes durante toda a jornada escolar.",
+    image: "/equipesam.jpeg",
+    button: "Continuar / Subir para as Salas",
+  },
+  ...expectMissions("e", [
+    "1º ano · Base comum e tempo integral",
+    "2º ano · Grupos de Matemática e Português",
+    "3º ano · Rumo ao ENEM",
+  ]),
+];
+
+/* Caminhos do tour automático ---------------------------------------- */
+
+export type TourLeg = {
+  /** pontos (x, z) percorridos em ordem; a altura vem do piso (rampa, passarela) */
+  path: [number, number][];
+  /** para onde olhar ao chegar (yaw) */
+  face: number;
+  /** inclinação do olhar ao chegar (pitch; positivo = para cima). Padrão: horizonte. */
+  pitch?: number;
+};
+
+/** Eixo do corredor térreo/superior do bloco esquerdo. */
+const WEST_LANE = -(BLOCK_X + PATIO_X) / 2;
+/** Passagem do pátio da entrada para o corredor esquerdo (entre o pilar e a placa de setores). */
+const HALL_TO_WEST: [number, number][] = [
+  [-6.6, 1.6],
+  [-6.6, -1.2],
+  [WEST_LANE, -2.2],
+];
+const laneA = (ramp.a.z0 + ramp.a.z1) / 2;
+const laneB = (ramp.b.z0 + ramp.b.z1) / 2;
+const topX = (ramp.top.x0 + ramp.top.x1) / 2;
+const bridgeZ = (bridge.z0 + bridge.z1) / 2;
+/** Pé da rampa (início do 1º lance). */
+const RAMP_FOOT: [number, number] = [ramp.a.x0 - 0.8, laneA];
+/**
+ * Parada da Equipe SAM: no meio do 1º lance da rampa, de frente para o quadro na parede do
+ * patamar, longe o bastante para a foto (2,9 m de largura) caber inteira na tela.
+ */
+const TEAM_STOP: [number, number] = [6.3, laneA];
+/** Do ponto da Equipe SAM, termina o 1º lance, vira no patamar e atravessa a passarela. */
+const REST_OF_RAMP: [number, number][] = [
+  [ramp.a.x1 - 0.1, laneA],
+  [(ramp.landing.x0 + ramp.landing.x1) / 2, laneA],
+  [(ramp.landing.x0 + ramp.landing.x1) / 2, laneB],
+  [ramp.b.x0 + 0.5, laneB],
+  [topX, laneB],
+  [topX, bridgeZ],
+  [WEST_LANE, bridgeZ],
+];
+/** Fim do corredor esquerdo, junto ao passeio coberto do fundo. */
+const WEST_END: [number, number] = [WEST_LANE, BACK_Z + 0.7];
+
+/** Centro do quadro (na parede da Biblioteca, à altura do patamar). */
+const TEAM_BOARD = { x: BLOCK_X - 0.1, z: (ramp.landing.z0 + ramp.landing.z1) / 2, y: 3.46 };
+const EYE = 1.68;
+/** Altura do piso do 1º lance da rampa na coordenada x. */
+const rampFloorAt = (x: number) => ((x - ramp.a.x0) / (ramp.a.x1 - ramp.a.x0)) * LANDING_Y;
+
+const front = (id: string, distance = 1.4) => doorFront(roomById[id]!, distance);
+const inside = (id: string) => {
+  const room = roomById[id]!;
+  return toWorld(room, 0, room.d / 2 - 0.7);
+};
+/** Olhando para a porta/quadro da sala. */
+const facing = (id: string) => doorAngle[roomById[id]!.door];
+
+/** Trecho que leva até cada parada do tour, a partir da parada anterior. */
+export const tourLegs: Record<string, TourLeg> = {
+  "v-auditorio": { path: [[-3, 9.5], front("auditorio", 1.6)], face: facing("auditorio") },
+  "v-professores": {
+    path: [...HALL_TO_WEST, front("professores")],
+    face: facing("professores"),
+  },
+  "v-linguas": { path: [front("linguas")], face: facing("linguas") },
+  // pelo corredor até o fundo e para logo depois da entrada da quadra
+  "v-quadra": {
+    path: [WEST_END, front("quadra"), inside("quadra")],
+    face: facing("quadra"),
+  },
+  // de volta pelo corredor até o pátio e direto para a rampa (sem passar pela Biblioteca):
+  // começa a subir e para no 1º lance, de frente para o quadro da Equipe SAM
+  "v-equipe": {
+    path: [
+      front("quadra"),
+      WEST_END,
+      [WEST_LANE, -2.2],
+      [-6.6, -1.2],
+      [-6.6, 1.6],
+      [-2, 9.4],
+      [1, 8.6],
+      RAMP_FOOT,
+      TEAM_STOP,
+    ],
+    face: Math.atan2(-(TEAM_BOARD.x - TEAM_STOP[0]), -(TEAM_BOARD.z - TEAM_STOP[1])),
+    pitch: Math.atan2(
+      TEAM_BOARD.y - (rampFloorAt(TEAM_STOP[0]) + EYE),
+      Math.hypot(TEAM_BOARD.x - TEAM_STOP[0], TEAM_BOARD.z - TEAM_STOP[1]),
+    ),
+  },
+  // continua a subida da rampa a partir do ponto da Equipe SAM
+  "e-sala1": {
+    path: [...REST_OF_RAMP, front("sala1"), inside("sala1")],
+    face: facing("sala1"),
+  },
+  "e-sala2": {
+    path: [front("sala1"), front("sala2"), inside("sala2")],
+    face: facing("sala2"),
+  },
+  "e-sala3": {
+    path: [front("sala2"), front("sala3"), inside("sala3")],
+    face: facing("sala3"),
+  },
+};
+
+/**
+ * MODO "Conhecer o Curso": o jogador vai direto para a sala do 1º Desenvolvimento e segue
+ * automaticamente para a do 2º e a do 3º. O quiz só aparece depois da sala do 3º ano.
+ */
+export const courseMissions: Mission[] = expectMissions("c", [
+  "1º Desenvolvimento · Os primeiros passos",
+  "2º Desenvolvimento · Sistemas e apps",
+  "3º Desenvolvimento · Estágio e projeto social",
+]);
+
+/** Todas as missões possíveis (para buscar por id). */
+export const allMissions: Mission[] = [...schoolTour, ...courseMissions];
+
+export const XP_PER_MISSION = 100;
+
+/* ------------------------------------------------------------------ */
+/* Conteúdos das salas de DS em cada modo, quiz e ranking              */
+/* ------------------------------------------------------------------ */
+
+export type Topic = { name: string; text: string };
+export type RoomContent = {
+  year: string;
+  topics: Topic[];
+  highlight?: Topic;
+  /** pergunta aberta de expectativas (parte inferior do painel) */
+  question: string;
+};
+
+/** MODO "Conhecer a Escola": o que se estuda na escola (base comum) em cada ano. */
+export const schoolContent: Record<string, RoomContent> = {
   sala1: {
     year: "1º ano",
     topics: [
       {
-        name: "Como funcionam as aulas",
-        text: "As disciplinas da base comum (Português, Matemática, Ciências…) e as do curso técnico dividem a semana. Você estuda o ensino médio e a profissão ao mesmo tempo.",
-      },
-      {
-        name: "Introdução à lógica de programação",
-        text: "O ponto de partida do curso: aprender a resolver problemas passo a passo com algoritmos, antes de escrever código de verdade.",
-      },
-      {
-        name: "A rotina do curso técnico",
-        text: "Aulas práticas no laboratório de informática, projetos em equipe e professores acompanhando de perto a evolução de cada aluno.",
-      },
-      {
-        name: "Adaptação ao tempo integral",
-        text: "As aulas vão das 7h às 17h, com almoço na escola. O primeiro ano é para se acostumar com o novo ritmo, fazer amizades e criar hábitos de estudo.",
+        name: "Matérias da Base Comum do Ensino Médio",
+        text: "Português, Matemática, Física, Química, Biologia, História, Geografia, Filosofia, Sociologia, Inglês, Artes e Educação Física, junto com o curso técnico.",
       },
     ],
+    highlight: {
+      name: "Adaptação à rotina integral da EEEP",
+      text: "As aulas começam às 07:15 e terminam às 16:40, com almoço na escola. O 1º ano é para se acostumar com o novo ritmo, fazer amizades e criar hábitos de estudo.",
+    },
+    question: "O que você espera no seu 1º ano de EEEP?",
   },
   sala2: {
     year: "2º ano",
     topics: [
       {
-        name: "Prática técnica intensificada",
-        text: "Os conteúdos técnicos ficam mais fortes: bancos de dados, desenvolvimento web e mobile, com projetos cada vez mais completos.",
-      },
-      {
-        name: "Início da preparação para o ENEM",
-        text: "Junto com o técnico, a escola começa a preparar a turma para o ENEM, com revisões, simulados e acompanhamento do desempenho.",
+        name: "Base comum aprofundada",
+        text: "Os conteúdos do ensino médio ficam mais densos e a escola acompanha de perto o desempenho de cada aluno.",
       },
     ],
     highlight: {
-      name: "Grupos de Estudo de Matemática e Português",
-      text: "A turma é dividida em grupos para focar no fortalecimento das competências cobradas no ENEM e no SPAECE. Cada grupo trabalha no seu ritmo, revisando o que mais precisa.",
+      name: "Grupos de estudo de Matemática e Língua Portuguesa",
+      text: "A turma é dividida em grupos focados em Matemática e Língua Portuguesa, para fortalecer as competências cobradas no ENEM e no SPAECE. Cada grupo trabalha no seu ritmo.",
     },
+    question: "O que você espera no seu 2º ano de EEEP?",
   },
   sala3: {
     year: "3º ano",
     topics: [
       {
-        name: "Preparação total para o ENEM",
-        text: "É o ano do “agora é valendo”: revisões intensas, simulados e foco total no ENEM e nos vestibulares.",
-      },
-      {
-        name: "Projeto final",
-        text: "A turma desenvolve um sistema completo, do planejamento à entrega, aplicando tudo o que aprendeu nos três anos.",
+        name: "Revisões e simulados",
+        text: "Aulas de revisão de todas as áreas e simulados periódicos no modelo do ENEM, com correção comentada.",
       },
     ],
     highlight: {
-      name: "Estágio supervisionado, projeto e Expotec",
-      text: "O desafio do 3º ano é conciliar o Estágio Curricular Supervisionado nas empresas, com acompanhamento da escola, com a elaboração do projeto final e a apresentação para a comunidade na Expotec.",
+      name: "Preparação intensiva para o ENEM e vestibulares",
+      text: "É o ano do “agora é valendo”: o foco da base comum é a aprovação no ENEM e nos vestibulares, com redação semanal e plantões de dúvidas.",
     },
+    question: "O que você espera no seu 3º ano de EEEP?",
   },
 };
+
+/** MODO "Conhecer o Curso": o que se estuda em Desenvolvimento de Sistemas em cada ano. */
+export const courseContent: Record<string, RoomContent> = {
+  sala1: {
+    year: "1º ano",
+    topics: [
+      {
+        name: "Lógica de programação básica",
+        text: "Aprender a resolver problemas passo a passo, com algoritmos, antes de escrever código de verdade.",
+      },
+      {
+        name: "Fundamentos de informática",
+        text: "Como funcionam o computador, o sistema operacional e a internet — a base de tudo no curso.",
+      },
+      {
+        name: "Criação de sites (HTML/CSS)",
+        text: "As primeiras páginas da internet: HTML para o conteúdo e CSS para cores, fontes e layout.",
+      },
+    ],
+    highlight: {
+      name: "Participação na Expotec",
+      text: "Já no 1º ano a turma participa da Expotec, a feira em que os alunos mostram seus projetos à comunidade.",
+    },
+    question: "O que você espera aprender no 1º ano do curso?",
+  },
+  sala2: {
+    year: "2º ano",
+    topics: [
+      {
+        name: "Desenvolvimento de sistemas",
+        text: "Sistemas completos que funcionam no navegador, com cadastro, login e dados salvos.",
+      },
+      {
+        name: "Aplicativos",
+        text: "Criação de apps para celular, da tela até o funcionamento.",
+      },
+    ],
+    highlight: {
+      name: "Participação na Expotec",
+      text: "No 2º ano a turma volta à Expotec com projetos mais completos. A feira é organizada pelos alunos do 1º e do 2º ano.",
+    },
+    question: "Quais são suas expectativas para o 2º ano do curso?",
+  },
+  sala3: {
+    year: "3º ano",
+    topics: [
+      {
+        name: "Estágio curricular supervisionado",
+        text: "O aluno trabalha em uma empresa da área de tecnologia, aplicando o que aprendeu, com acompanhamento da escola.",
+      },
+      {
+        name: "Projeto social na área de tecnologia",
+        text: "No final do ano, a turma cria um projeto de tecnologia para ajudar a comunidade.",
+      },
+    ],
+    highlight: {
+      name: "Sem Expotec no 3º ano",
+      text: "Os alunos do 3º ano não participam nem organizam a Expotec — ela é organizada apenas pelos alunos do 1º e do 2º ano. O foco do 3º ano é o estágio e o projeto social.",
+    },
+    question: "O que você espera conquistar no 3º ano do curso?",
+  },
+};
+
+/** Conteúdo da sala de DS conforme o modo escolhido. */
+export const roomContent = (route: Route, room: string) =>
+  (route === "curso" ? courseContent : schoolContent)[room];
+
+/** O que se faz nos laboratórios de computadores (Informática e Línguas são iguais). */
+const computerLabSections: Topic[] = [
+  {
+    name: "Como funciona",
+    text: "Cada aluno trabalha em um computador durante as aulas práticas. O professor demonstra no projetor e a turma programa junto.",
+  },
+  {
+    name: "Infraestrutura",
+    text: "Bancadas com computadores ligados à internet, monitores, cadeiras, projetor, quadro e os programas usados pelos desenvolvedores: editores de código, navegadores e bancos de dados.",
+  },
+  {
+    name: "Nas aulas do curso técnico",
+    text: "Lógica de programação, desenvolvimento web e mobile, banco de dados e os projetos em equipe — incluindo os projetos apresentados na Expotec.",
+  },
+  {
+    name: "Estudos e pesquisas",
+    text: "Pesquisas, produção de trabalhos, apresentações e simulados online das disciplinas da base comum.",
+  },
+];
 
 /** Laboratórios: só exploração, sem missão. O modal abre ao entrar. */
 export const labInfo: Record<string, { intro: string; sections: Topic[] }> = {
   informatica: {
-    intro: "O coração do curso de Desenvolvimento de Sistemas.",
-    sections: [
-      {
-        name: "Como funciona",
-        text: "Cada aluno trabalha em um computador durante as aulas práticas. O professor demonstra no projetor e a turma programa junto.",
-      },
-      {
-        name: "Infraestrutura",
-        text: "Bancadas com computadores ligados à internet, projetor, quadro e os programas usados pelos desenvolvedores: editores de código, navegadores e bancos de dados.",
-      },
-      {
-        name: "Nas aulas do curso técnico",
-        text: "Lógica de programação, desenvolvimento web e mobile, banco de dados e os projetos em equipe — incluindo o projeto final da Expotec.",
-      },
-      {
-        name: "Na base comum",
-        text: "Pesquisas, produção de trabalhos, apresentações e simulados online das outras disciplinas.",
-      },
-    ],
+    intro:
+      "O coração do curso de Desenvolvimento de Sistemas. Tudo o que se faz aqui também é feito no Laboratório de Línguas.",
+    sections: computerLabSections,
+  },
+  linguas: {
+    intro:
+      "Apesar do nome, não é uma sala de idiomas: na prática ele funciona como um segundo Laboratório de Informática. Tudo o que se faz no Laboratório de Informática também é feito aqui — a única diferença entre os dois é o nome na placa.",
+    sections: computerLabSections,
   },
   ciencias: {
     intro: "Química, Biologia e Física saem do livro e viram experimento.",
@@ -989,96 +1219,88 @@ export const labInfo: Record<string, { intro: string; sections: Topic[] }> = {
       },
     ],
   },
-  linguas: {
-    intro: "Onde o inglês e o espanhol ganham voz.",
-    sections: [
-      {
-        name: "Como funciona",
-        text: "Atividades de escuta, fala, leitura e escrita, com áudios e vídeos para treinar a pronúncia e a compreensão.",
-      },
-      {
-        name: "Infraestrutura",
-        text: "Carteiras com fones de ouvido, recursos de áudio e vídeo, projetor e materiais didáticos de língua estrangeira.",
-      },
-      {
-        name: "Nas aulas do curso técnico",
-        text: "Inglês técnico: a maioria das linguagens, ferramentas e documentações de programação está em inglês.",
-      },
-      {
-        name: "Na base comum",
-        text: "Aulas de inglês e espanhol e a preparação para a prova de língua estrangeira do ENEM.",
-      },
-    ],
-  },
 };
 
 export type QuizQuestion = {
-  year: string;
   question: string;
   options: string[];
   answer: number;
   explanation: string;
 };
 
-/** Quiz final: 6 perguntas fáceis, 2 de cada ano do curso. */
+/** Quiz final do curso: 6 perguntas fáceis e diretas (gabarito: A, C, B, D, B, C). */
 export const courseQuiz: QuizQuestion[] = [
   {
-    year: "1º ano",
-    question: "Em qual disciplina você acha que vai começar a aprender programação?",
-    options: ["Educação Física", "Lógica de Programação", "Geografia", "Artes"],
-    answer: 1,
-    explanation:
-      "A introdução à lógica de programação abre o curso: resolver problemas passo a passo!",
+    question:
+      "O que um estudante aprende na prática durante o curso técnico em Desenvolvimento de Sistemas?",
+    options: [
+      "A criar sites, aplicativos e sistemas de computador",
+      "A consertar motores de carros e motos",
+      "A fazer receitas de culinária e panificação",
+      "A plantar árvores e cuidar de jardins",
+    ],
+    answer: 0,
+    explanation: "Isso! Sites, aplicativos e sistemas são o que um desenvolvedor cria.",
   },
   {
-    year: "1º ano",
-    question: "Como é o horário de aulas na EEEP?",
+    question:
+      "Para criar a estrutura e o visual bonito de um site na internet, quais tecnologias básicas o aluno aprende logo no início do curso?",
     options: [
-      "Só pela manhã",
-      "Só à noite",
-      "Tempo integral, das 7h às 17h",
-      "Um dia sim, outro não",
+      "Martelo e Chave de Fenda",
+      "Pincel e Tinta Guache",
+      "HTML e CSS",
+      "Régua e Compasso",
     ],
     answer: 2,
-    explanation: "A EEEP é de tempo integral — o 1º ano é para se adaptar a esse novo ritmo.",
+    explanation: "O HTML monta a estrutura da página e o CSS cuida do visual.",
   },
   {
-    year: "2º ano",
-    question: "Onde ficam guardadas as informações de um sistema, como nomes e notas dos alunos?",
-    options: ["No banco de dados", "Na mochila", "No mouse", "Na caixa de som"],
-    answer: 0,
-    explanation: "Bancos de dados são um dos conteúdos técnicos que ganham força no 2º ano.",
-  },
-  {
-    year: "2º ano",
-    question: "Para que servem os Grupos de Estudo de Matemática e Português do 2º ano?",
+    question: "O que é um algoritmo, muito estudado nas primeiras aulas de programação do curso?",
     options: [
-      "Para organizar festas",
-      "Para fortalecer as competências do ENEM e do SPAECE",
-      "Para escolher o time de futebol",
-      "Para trocar de curso",
+      "Um tipo de cabo usado para ligar o monitor na tomada",
+      "Uma sequência lógica de passos para resolver um problema ou realizar uma tarefa no computador",
+      "O nome da cadeira usada no laboratório",
+      "Um programa usado apenas para desenhar no papel",
     ],
     answer: 1,
-    explanation: "A turma é dividida em grupos para reforçar o que o ENEM e o SPAECE cobram.",
+    explanation: "Algoritmo é o passo a passo que o computador segue para resolver um problema.",
   },
   {
-    year: "3º ano",
-    question: "O que o aluno de DS faz no estágio supervisionado do 3º ano?",
+    question:
+      "Quando um programador encontra um erro (chamado de 'bug') no código do seu aplicativo, o que ele precisa fazer?",
     options: [
-      "Trabalha em uma empresa aplicando o que aprendeu",
-      "Fica de férias o ano todo",
-      "Só assiste vídeos em casa",
-      "Muda de curso",
+      "Jogar o computador fora e comprar outro",
+      "Desligar o Wi-Fi da escola inteira",
+      "Pintar a tela do monitor",
+      "Revisar o código, encontrar o problema e corrigir para o sistema voltar a funcionar",
     ],
-    answer: 0,
-    explanation: "No estágio você vive a rotina de uma empresa de verdade, com apoio da escola.",
+    answer: 3,
+    explanation:
+      "Encontrar e corrigir bugs (a “depuração”) faz parte do dia a dia de quem programa.",
   },
   {
-    year: "3º ano",
-    question: "Onde os alunos apresentam o projeto final para a comunidade?",
-    options: ["Na cantina", "Na Expotec", "Na quadra, no intervalo", "Em lugar nenhum"],
+    question:
+      "No 3º ano do curso técnico em Desenvolvimento de Sistemas, qual é a principal atividade prática onde os alunos aplicam o que aprenderam para ajudar a comunidade?",
+    options: [
+      "Pintar os muros externos da escola",
+      "Desenvolver um projeto social na área de tecnologia, além de realizar o estágio supervisionado",
+      "Fazer apenas provas de educação física na quadra",
+      "Organizar torneios de futebol no refeitório",
+    ],
     answer: 1,
-    explanation: "Na Expotec os alunos mostram à comunidade os projetos que criaram.",
+    explanation: "No 3º ano vêm o estágio supervisionado e o projeto social de tecnologia.",
+  },
+  {
+    question:
+      "Por que os estudantes de Desenvolvimento de Sistemas aprendem a usar senhas fortes e proteger dados nos sistemas?",
+    options: [
+      "Para deixar a tela do computador mais colorida",
+      "Para aumentar o volume das caixas de som",
+      "Para manter as informações dos usuários seguras contra invasões e vazamentos",
+      "Para economizar energia elétrica",
+    ],
+    answer: 2,
+    explanation: "Segurança da informação protege os dados das pessoas que usam o sistema.",
   },
 ];
 

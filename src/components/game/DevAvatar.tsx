@@ -259,11 +259,50 @@ export function DevAvatar({
         </mesh>
       }
       {girl && (
+        // cabelo solto: volume dos lados do rosto, mechas caindo sobre os ombros e
+        // uma cortina de cabelo descendo pelas costas (sem coque nem penteado preso)
         <group>
+          {/* volume lateral, cobrindo as orelhas */}
           {[-1, 1].map((side) => (
-            <mesh key={`hair${side}`} position={[side * 0.18, 1.47, -0.02]} castShadow>
-              <capsuleGeometry args={[0.085, 0.25, 4, 8]} />
-              <meshStandardMaterial color={hair} roughness={0.9} />
+            <mesh
+              key={`vol${side}`}
+              position={[side * 0.17, 1.6, -0.06]}
+              scale={[0.55, 1, 0.95]}
+              castShadow
+            >
+              <sphereGeometry args={[0.22, 16, 12]} />
+              <meshStandardMaterial color={hair} roughness={0.85} />
+            </mesh>
+          ))}
+          {/* mechas caindo à frente dos ombros */}
+          {[-1, 1].map((side) => (
+            <mesh
+              key={`lock${side}`}
+              position={[side * 0.19, 1.32, 0.09]}
+              rotation={[-0.3, 0, side * 0.12]}
+              scale={[1, 1, 0.75]}
+              castShadow
+            >
+              <capsuleGeometry args={[0.075, 0.34, 4, 10]} />
+              <meshStandardMaterial color={hair} roughness={0.85} />
+            </mesh>
+          ))}
+          {/* cortina de cabelo nas costas, com caimento até o meio das costas */}
+          <mesh position={[0, 1.4, -0.19]} scale={[1.2, 1, 0.55]} castShadow>
+            <capsuleGeometry args={[0.2, 0.42, 6, 16]} />
+            <meshStandardMaterial color={hair} roughness={0.85} />
+          </mesh>
+          {/* pontas levemente abertas, para o caimento não ficar reto */}
+          {[-1, 1].map((side) => (
+            <mesh
+              key={`tip${side}`}
+              position={[side * 0.13, 1.1, -0.2]}
+              rotation={[0.12, 0, side * 0.18]}
+              scale={[1, 1, 0.6]}
+              castShadow
+            >
+              <capsuleGeometry args={[0.1, 0.14, 4, 10]} />
+              <meshStandardMaterial color={hair} roughness={0.85} />
             </mesh>
           ))}
         </group>

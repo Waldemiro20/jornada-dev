@@ -4,31 +4,35 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Check,
   ChevronsUp,
-  BookOpen,
+  FlaskConical,
   Flag,
   GraduationCap,
-  FlaskConical,
+  Home,
   School,
   Map as MapIcon,
   MapPin,
-  RotateCcw,
   Shirt,
-  Sparkles,
   Star,
   X,
   Zap,
+  Smartphone,
 } from "lucide-react";
+import { isTouchDevice } from "@/lib/immersive";
 import { SceneFallback, SchoolScene, type Controls, type Vec2 } from "./SchoolWorld";
 import { ActionButton, Joystick } from "./Controls";
 import { GuidePortrait } from "./GuidePortrait";
-import { CourseQuiz } from "./CourseQuiz";
-import { hasPlayed, playerKey } from "@/game/ranking";
+import { CourseQuiz, ExpectationPanel, VisitCard } from "./CourseQuiz";
+import { findPlayed, playerKey, saveExpectation, saveScore, type RankEntry } from "@/game/ranking";
 import type { Player } from "../LoginScreen";
 import { describeLook, fardaOptions, type AvatarLook } from "@/game/avatar";
 import {
+  allMissions,
   COURSE_ROOMS,
-  courseContent,
+  courseMissions,
+  schoolTour,
+  tourLegs,
   labInfo,
+  QUIZ_POINTS,
   atPortaria,
   doorAngle,
   BACK_Z,
@@ -45,32 +49,25 @@ import {
   roomY,
   upperCorridor,
   toWorld,
-  missionByRoom,
-  missions,
   portaria,
   roomById,
   rooms,
   spawn,
   worldSize,
-  XP_FIRST_TRY_BONUS,
   XP_PER_MISSION,
   type Mission,
   type Route,
+  type TourLeg,
 } from "@/game/school";
-import { guide, npcs } from "@/game/people";
+import { guide } from "@/game/people";
 
-type Done = Record<string, { xp: number; answer?: string; skipped?: boolean }>;
-
-/** Texto da opção para pular a pergunta de expectativa. */
-const SKIP_TEXT = "Prefiro não responder";
-const isSkip = (text: string) =>
-  text
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z ]/g, "")
-    .trim() === "prefiro nao responder";
+type Done = Record<string, { xp: number }>;
 type Toast = { title: string; text: string; xp: number };
+
+/** Espera na Entrada antes de o tour da escola começar (curso → escola). */
+const SCHOOL_START_DELAY_MS = 2000;
+/** Posição padrão no pátio da Entrada, olhando para dentro da escola (yaw 0 = -z). */
+const ENTRANCE_SPOT = { x: 0, z: FACADE_Z - 1.5, yaw: 0 };
 
 export function SchoolGameScreen({
   player,
@@ -88,18 +85,32 @@ export function SchoolGameScreen({
   const [richGraphics] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(pointer: fine)").matches,
   );
+  /** celular/tablet: joystick, botões e arraste da câmera; no PC ficam escondidos */
+  const [touch] = useState(isTouchDevice);
+
+  /* Ao girar o aparelho, o iOS às vezes informa o tamanho antigo: força um novo resize
+     depois que a rotação termina para o canvas (renderer + camera.aspect) se ajustar. */
+  useEffect(() => {
+    const timers: number[] = [];
+    const refit = () => {
+      for (const ms of [120, 400])
+        timers.push(window.setTimeout(() => window.dispatchEvent(new Event("resize")), ms));
+    };
+    window.addEventListener("orientationchange", refit);
+    screen.orientation?.addEventListener?.("change", refit);
+    return () => {
+      window.removeEventListener("orientationchange", refit);
+      screen.orientation?.removeEventListener?.("change", refit);
+      timers.forEach((id) => window.clearTimeout(id));
+    };
+  }, []);
 
   const [done, setDone] = useState<Done>({});
   const [currentRoom, setCurrentRoom] = useState<string | null>(null);
+  /** Card da parada ou painel da sala de DS aberto (id da missão). */
   const [openMission, setOpenMission] = useState<string | null>(null);
-  const [quiz, setQuiz] = useState<{ wrong: number[]; solved: boolean }>({
-    wrong: [],
-    solved: false,
-  });
-  const [draft, setDraft] = useState("");
   const [toast, setToast] = useState<Toast | null>(null);
   const [showMap, setShowMap] = useState(false);
-  const [showFinal, setShowFinal] = useState(false);
   const [runToggle, setRunToggle] = useState(false);
   const [mapSnapshot, setMapSnapshot] = useState<Vec2>({ x: spawn[0], z: spawn[1] });
   const [look, setLook] = useState<AvatarLook>(avatar);
@@ -107,23 +118,24 @@ export function SchoolGameScreen({
   const [showWelcome, setShowWelcome] = useState(false);
   const [showPortaria, setShowPortaria] = useState(false);
   const [teleporting, setTeleporting] = useState<string | null>(null);
-  const [showQuiz, setShowQuiz] = useState(false);
-  /** Este jogador (pelo WhatsApp) já concluiu o quiz? Então não pode refazer. */
-  const [quizDone, setQuizDone] = useState(() => hasPlayed(playerKey(player.contato)));
-  const [route, setRoute] = useState<Route | null>(null);
-
-  /* Rota "curso": só as salas de DS. Rota "escola": a trilha completa. */
-  const trail = useMemo(
-    () =>
-      route === "curso"
-        ? missions.filter((m) => (COURSE_ROOMS as readonly string[]).includes(m.room))
-        : missions,
-    [route],
+  /** Teleporte imediato (curso → Entrada): a cortina já começa fechada. */
+  const coverNow = useRef(false);
+  /** Quiz final (modo curso): novo quiz ou aviso de que este nome já respondeu. */
+  const [quiz, setQuiz] = useState<{ mode: "quiz" | "blocked"; previous: RankEntry | null } | null>(
+    null,
   );
-  const routeRef = useRef(route);
-  routeRef.current = route;
-  const trailRef = useRef(trail);
-  trailRef.current = trail;
+  /** Fim da visita do modo escola (volta sozinho para o início). */
+  const [schoolEnd, setSchoolEnd] = useState(false);
+  const [route, setRoute] = useState<Route | null>(null);
+  /**
+   * Percursos concluídos nesta sessão. Só zeram ao voltar à tela inicial (o jogo é
+   * desmontado) ou ao recarregar o site. Impedem o vaivém curso ⇄ escola sem fim.
+   */
+  const [concluiuCurso, setConcluiuCurso] = useState(false);
+  const [concluiuEscola, setConcluiuEscola] = useState(false);
+
+  /* Modo "Conhecer o Curso": só as salas de DS. Modo "Conhecer a Escola": trilha guiada. */
+  const trail = useMemo(() => (route === "curso" ? courseMissions : schoolTour), [route]);
 
   /* 1. No portão: só uma mensagem de boas-vindas */
   useEffect(() => {
@@ -141,7 +153,6 @@ export function SchoolGameScreen({
     return () => window.clearInterval(id);
   }, [route, showWelcome, showPortaria]);
 
-  /* 3. Rota do curso: o jogador é levado direto para as salas de DS */
   /** Leva o boneco para dentro de uma sala (corredor entre as carteiras), com fade. */
   const teleportTo = useCallback((roomId: string, label: string) => {
     const room = roomById[roomId];
@@ -159,18 +170,113 @@ export function SchoolGameScreen({
     window.setTimeout(() => setTeleporting(null), 1100);
   }, []);
 
+  /* Tour automático do modo escola: o personagem anda sozinho até cada parada */
+  const autopilot = useRef<TourLeg | null>(null);
+  const autoTarget = useRef<string | null>(null);
+  const [walkingTo, setWalkingTo] = useState<string | null>(null);
+  /** Começa a caminhar até a parada `missionId` (o card abre ao chegar). */
+  const startLeg = useCallback((missionId: string) => {
+    const leg = tourLegs[missionId];
+    if (!leg) return;
+    input.current = { x: 0, z: 0 };
+    autoTarget.current = missionId;
+    // cópia: o Player consome os pontos do trecho
+    autopilot.current = { path: leg.path.map(([x, z]) => [x, z]), face: leg.face };
+    setWalkingTo(missionId);
+  }, []);
+  const onAutoArrive = useCallback(() => {
+    setWalkingTo(null);
+    if (autoTarget.current) setOpenMission(autoTarget.current);
+  }, []);
+
   const chooseRoute = (choice: Route) => {
     setShowPortaria(false);
     setRoute(choice);
-    if (choice === "curso") teleportTo(COURSE_ROOMS[0], "Indo para a sala do 1º ano de DS...");
+    // "Conhecer o Curso" começa direto na sala do 1º Desenvolvimento;
+    // "Conhecer a Escola" começa o tour automático pelo Auditório
+    if (choice === "curso")
+      teleportTo(COURSE_ROOMS[0], "Indo para a sala do 1º Desenvolvimento...");
+    else startLeg(schoolTour[0]!.id);
   };
 
-  /* Laboratórios: só exploração. Ao entrar, abre o modal que apresenta o espaço. */
+  /** Esquece o progresso de um modo, para refazê-lo do começo. */
+  const resetRoute = (list: Mission[]) =>
+    setDone((current) => {
+      const next = { ...current };
+      for (const m of list) delete next[m.id];
+      return next;
+    });
+
+  /* Tour pendente (curso → escola): cancelado se o jogador sair antes dos 2 s */
+  const tourTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (tourTimer.current !== null) window.clearTimeout(tourTimer.current);
+    },
+    [],
+  );
+
+  /**
+   * Fim do modo curso → "Conhecer a Escola": fecha o ranking, leva o personagem para a
+   * Entrada (olhando para dentro) e, 2 s depois, começa o tour automático pelo Auditório.
+   */
+  const switchToSchool = () => {
+    setQuiz(null);
+    setOpenMission(null);
+    autopilot.current = null;
+    setWalkingTo(null);
+    resetRoute(schoolTour);
+    setRoute("escola");
+    input.current = { x: 0, z: 0 };
+    // tela já coberta (sem fade de entrada) para o salto não aparecer; depois clareia suave
+    coverNow.current = true;
+    setTeleporting("Indo para a Entrada da escola...");
+    window.setTimeout(() => {
+      setTeleporting(null);
+      coverNow.current = false;
+    }, 900);
+    posRef.current.x = ENTRANCE_SPOT.x;
+    posRef.current.z = ENTRANCE_SPOT.z;
+    posRef.current.y = 0;
+    posRef.current.yaw = ENTRANCE_SPOT.yaw;
+    if (tourTimer.current !== null) window.clearTimeout(tourTimer.current);
+    tourTimer.current = window.setTimeout(() => {
+      tourTimer.current = null;
+      startLeg(schoolTour[0]!.id);
+    }, SCHOOL_START_DELAY_MS);
+  };
+
+  /**
+   * Fim do modo escola → "Conhecer o Curso": fecha a conclusão da visita e leva o
+   * personagem para dentro da sala do 1º Desenvolvimento (o painel abre ao chegar).
+   */
+  const switchToCourse = () => {
+    setSchoolEnd(false);
+    setOpenMission(null);
+    autopilot.current = null;
+    setWalkingTo(null);
+    resetRoute(courseMissions);
+    setRoute("curso");
+    teleportTo(COURSE_ROOMS[0], "Indo para a sala do 1º Desenvolvimento...");
+  };
+
+  /** Próxima parada do tour depois de `mission` (modo escola). */
+  const continueTour = (mission: Mission) => {
+    const next = schoolTour[schoolTour.indexOf(mission) + 1];
+    if (next) startLeg(next.id);
+  };
+
+  const nextMission = route ? trail.find((mission) => !done[mission.id]) : undefined;
+  const nextRoomId = nextMission?.room ?? null;
+  const nextStep = nextMission ? trail.indexOf(nextMission) + 1 : 0;
+
+  /* Laboratórios fora da trilha: exploração livre, com o modal que apresenta o espaço. */
   const [openLab, setOpenLab] = useState<string | null>(null);
   useEffect(() => {
-    if (!currentRoom || !labInfo[currentRoom]) return;
+    if (!currentRoom || !labInfo[currentRoom] || currentRoom === nextRoomId) return;
     input.current = { x: 0, z: 0 };
     setOpenLab(currentRoom);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- abre só ao entrar na sala
   }, [currentRoom]);
   const activeLab = openLab ? labInfo[openLab] : undefined;
 
@@ -178,49 +284,25 @@ export function SchoolGameScreen({
     openLab !== null ||
     openMission !== null ||
     showMap ||
-    showFinal ||
     showWelcome ||
     showPortaria ||
-    showQuiz ||
+    quiz !== null ||
+    schoolEnd ||
     teleporting !== null;
-  const nextMission = route ? trail.find((mission) => !done[mission.id]) : undefined;
-  const nextRoomId = nextMission?.room ?? null;
-  const roomMission =
-    currentRoom && trail.some((m) => m.room === currentRoom)
-      ? missionByRoom[currentRoom]
-      : undefined;
   const totalXp = useMemo(
     () => Object.values(done).reduce((sum, item) => sum + item.xp, 0),
     [done],
   );
-  const roomPeople = currentRoom ? npcs.filter((npc) => npc.room === currentRoom) : [];
   const doneCount = trail.filter((m) => done[m.id]).length;
 
   const stop = useCallback(() => {
     input.current = { x: 0, z: 0 };
   }, []);
 
-  const complete = useCallback(
-    (mission: Mission, xp: number, text: string, answer?: string, skipped = false) => {
-      setDone((current) => {
-        if (current[mission.id]) return current;
-        const entry = { xp, ...(answer ? { answer } : {}), ...(skipped ? { skipped } : {}) };
-        const next = { ...current, [mission.id]: entry };
-        const list = trailRef.current;
-        // a rota da escola termina no Mapa do Futuro (a do curso abre o quiz em finishReflection)
-        if (
-          routeRef.current === "escola" &&
-          list.every((m) => next[m.id]) &&
-          list.some((m) => !current[m.id])
-        ) {
-          window.setTimeout(() => setShowFinal(true), 1600);
-        }
-        return next;
-      });
-      setToast({ title: mission.title, text, xp });
-    },
-    [],
-  );
+  const complete = useCallback((mission: Mission, xp: number, text: string | null) => {
+    setDone((current) => (current[mission.id] ? current : { ...current, [mission.id]: { xp } }));
+    if (text !== null) setToast({ title: mission.title, text, xp });
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -230,7 +312,7 @@ export function SchoolGameScreen({
 
   const onCollect = useCallback(
     (missionId: string) => {
-      const mission = missions.find((m) => m.id === missionId);
+      const mission = allMissions.find((m) => m.id === missionId);
       if (mission?.type === "collect") complete(mission, XP_PER_MISSION, mission.success);
     },
     [complete],
@@ -238,52 +320,72 @@ export function SchoolGameScreen({
 
   const onRoomChange = useCallback((roomId: string | null) => setCurrentRoom(roomId), []);
 
-  const startMission = useCallback(
-    (mission: Mission) => {
-      stop();
-      setQuiz({ wrong: [], solved: false });
-      setDraft("");
-      setOpenMission(mission.id);
-    },
-    [stop],
-  );
+  /* Modo curso: ao entrar na sala de DS (teleporte), o painel abre sozinho */
+  useEffect(() => {
+    if (route !== "curso" || !nextMission || currentRoom !== nextMission.room) return;
+    if (nextMission.type === "collect") return;
+    const id = window.setTimeout(() => {
+      input.current = { x: 0, z: 0 };
+      setOpenLab(null);
+      setOpenMission(nextMission.id);
+    }, 350);
+    return () => window.clearTimeout(id);
+  }, [route, nextMission, currentRoom]);
 
   /**
-   * Conclui a pergunta de expectativa de uma sala de DS (respondida ou pulada).
-   * Na rota do curso o boneco pula sozinho para a próxima sala e, depois do 3º ano,
-   * o quiz abre na hora.
+   * Sala de DS concluída ("Enviar e Avançar" ou "Prefiro não responder"): guarda a resposta
+   * e avança sozinho 1º → 2º → 3º. Depois do 3º: quiz (curso) ou fim da visita (escola).
    */
-  const finishReflection = (mission: Mission, answer: string | null) => {
-    const skipped = answer === null;
+  const finishExpectation = (mission: Mission, answer: string | null) => {
+    if (!route) return;
+    saveExpectation({
+      nome: player.nome,
+      modo: route,
+      sala: mission.room,
+      resposta: answer,
+    });
     complete(
       mission,
       XP_PER_MISSION,
-      skipped ? "Tudo bem! Seguimos em frente." : "Sua expectativa foi guardada no Mapa do Futuro.",
-      answer ?? undefined,
-      skipped,
+      answer === null ? "Tudo bem! Seguimos em frente." : "Sua expectativa foi registrada.",
     );
     setOpenMission(null);
-    if (route !== "curso") return;
     const index = (COURSE_ROOMS as readonly string[]).indexOf(mission.room);
     const nextRoom = COURSE_ROOMS[index + 1];
     if (nextRoom) {
-      teleportTo(nextRoom, `Indo para a sala do ${index + 2}º ano de DS...`);
+      // curso: vai direto para a próxima sala; escola: o tour segue andando pelo corredor
+      if (route === "curso")
+        teleportTo(nextRoom, `Indo para a sala do ${index + 2}º Desenvolvimento...`);
+      else continueTour(mission);
+      return;
+    }
+    setToast(null);
+    if (route === "curso") {
+      // cada nome responde o quiz uma única vez
+      const previous = findPlayed(playerKey(player.nome)) ?? null;
+      setConcluiuCurso(true);
+      setQuiz({ mode: previous ? "blocked" : "quiz", previous });
     } else {
-      setToast(null);
-      setShowQuiz(true);
+      setConcluiuEscola(true);
+      setSchoolEnd(true);
     }
   };
 
-  /* Nas salas de DS a pergunta de expectativa aparece assim que o jogador entra */
-  const doneRef = useRef(done);
-  doneRef.current = done;
-  useEffect(() => {
-    const mission = currentRoom ? missionByRoom[currentRoom] : undefined;
-    if (!routeRef.current) return;
-    if (!mission || mission.type !== "reflection" || doneRef.current[mission.id]) return;
-    const id = window.setTimeout(() => startMission(mission), 350);
-    return () => window.clearTimeout(id);
-  }, [currentRoom, startMission]);
+  /** Salva o resultado do quiz (se este nome ainda não tiver um) e devolve a entrada. */
+  const finishQuiz = (acertos: number, tempo: number): RankEntry | null => {
+    const key = playerKey(player.nome);
+    const previous = findPlayed(key);
+    if (previous) return previous;
+    const { ranking, id } = saveScore({
+      nome: player.nome.trim().replace(/\s+/g, " "),
+      local: player.local,
+      key,
+      acertos,
+      score: acertos * QUIZ_POINTS,
+      tempo,
+    });
+    return ranking.find((r) => r.id === id) ?? null;
+  };
 
   /* teclado */
   useEffect(() => {
@@ -344,14 +446,15 @@ export function SchoolGameScreen({
     if (paused) stop();
   }, [paused, stop]);
 
-  const activeMission = openMission ? missions.find((m) => m.id === openMission) : undefined;
+  const activeMission = openMission ? allMissions.find((m) => m.id === openMission) : undefined;
 
   return (
-    <main className="relative h-[100dvh] min-h-[480px] overflow-hidden bg-[#bfe3ff] text-white">
+    <main className="relative h-[100dvh] w-full overflow-hidden overscroll-none bg-[#bfe3ff] text-white">
       <Canvas
-        dpr={[1, 1.5]}
+        // nitidez até 2x (Math.min(devicePixelRatio, 2)): poupa bateria em telas 3x
+        dpr={[1, 2]}
         shadows={richGraphics ? "soft" : false}
-        camera={{ position: [spawn[0], 1.7, spawn[1]], fov: 72, near: 0.05, far: 160 }}
+        camera={{ position: [spawn[0], 1.68, spawn[1]], fov: 75, near: 0.05, far: 160 }}
         gl={{ antialias: true }}
         className="absolute inset-0"
         fallback={<WebGLFallback />}
@@ -368,6 +471,8 @@ export function SchoolGameScreen({
             goal={route ? null : portaria}
             currentRoom={currentRoom}
             trail={route ? trail : []}
+            autopilot={autopilot}
+            onAutoArrive={onAutoArrive}
             onRoomChange={onRoomChange}
             onCollect={onCollect}
           />
@@ -381,7 +486,7 @@ export function SchoolGameScreen({
       />
 
       {/* ---------------- HUD ---------------- */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 bg-gradient-to-b from-[#0f0b1e]/85 to-transparent px-3 pb-6 pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 bg-gradient-to-b from-[#0f0b1e]/85 to-transparent pb-6 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.75rem,env(safe-area-inset-top))] short:pb-3">
         <div className="min-w-0">
           <p className="truncate font-display text-sm font-bold">{player.nome}</p>
           <p className="truncate text-[11px] text-white/70">{describeLook(look)}</p>
@@ -390,7 +495,8 @@ export function SchoolGameScreen({
               <Star className="h-3 w-3 fill-current" /> {totalXp} XP
             </span>
             <span className="rounded-full bg-white/15 px-2 py-0.5">
-              {route === "curso" ? "Salas de DS" : "Missões"} {doneCount}/{trail.length}
+              {route === "curso" ? "Conhecer o Curso · salas" : "Conhecer a Escola · paradas"}{" "}
+              {doneCount}/{trail.length}
             </span>
           </div>
         </div>
@@ -464,9 +570,51 @@ export function SchoolGameScreen({
         </div>
       </header>
 
-      {/* Objetivo / missão do local */}
+      {/* Objetivo atual (indicador no topo) */}
       <div className="pointer-events-none absolute inset-x-3 top-[5.5rem] z-10 flex justify-center">
-        {currentRoom && labInfo[currentRoom] ? (
+        {!route ? (
+          !showWelcome && (
+            <div className="flex max-w-full items-center gap-1.5 rounded-full bg-[#120e24]/80 px-3 py-1.5 text-xs backdrop-blur">
+              <MapPin className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+              <span className="truncate">
+                Siga a seta até a <b>ENTRADA</b>
+              </span>
+            </div>
+          )
+        ) : walkingTo && nextMission ? (
+          <div className="flex max-w-full items-center gap-1.5 rounded-full border border-amber-300/50 bg-[#120e24]/85 px-3 py-1.5 text-xs backdrop-blur">
+            <MapPin className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+            <span className="truncate">
+              Tour automático · parada {nextStep}/{trail.length}: caminhando até{" "}
+              <b>
+                {nextMission.type === "visit"
+                  ? nextMission.title
+                  : roomById[nextMission.room]?.name}
+              </b>
+            </span>
+          </div>
+        ) : nextMission && currentRoom === nextMission.room ? (
+          <button
+            type="button"
+            onClick={() => {
+              stop();
+              setOpenMission(nextMission.id);
+            }}
+            className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-amber-400/95 px-3 py-1.5 text-xs font-bold text-[#1c1206]"
+          >
+            <MapPin className="h-3.5 w-3.5" /> {nextMission.title} · abrir
+          </button>
+        ) : nextMission ? (
+          <div className="flex max-w-full items-center gap-1.5 rounded-full border border-amber-300/50 bg-[#120e24]/85 px-3 py-1.5 text-xs backdrop-blur">
+            <MapPin className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+            <span className="truncate">
+              Parada {nextStep}/{trail.length}: <b>{roomById[nextMission.room]?.name}</b>
+              {roomLevel(roomById[nextMission.room]!) === 1 && levelOf(posRef.current.y ?? 0) === 0
+                ? " · suba a rampa até o 2º andar"
+                : " · siga a seta amarela"}
+            </span>
+          </div>
+        ) : currentRoom && labInfo[currentRoom] ? (
           <button
             type="button"
             onClick={() => {
@@ -475,59 +623,8 @@ export function SchoolGameScreen({
             }}
             className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-violet-600/90 px-3 py-1.5 text-xs font-bold"
           >
-            <FlaskConical className="h-3.5 w-3.5" /> {roomById[currentRoom]?.name} · Exploração ·
-            ver informações
+            <FlaskConical className="h-3.5 w-3.5" /> {roomById[currentRoom]?.name} · ver informações
           </button>
-        ) : roomMission && !done[roomMission.id] ? (
-          <motion.div
-            key={roomMission.id}
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="pointer-events-auto w-full max-w-md rounded-2xl border border-amber-300/50 bg-[#120e24]/90 p-3 shadow-xl backdrop-blur"
-          >
-            <p className="font-mono text-[10px] uppercase tracking-widest text-amber-300">
-              {roomById[roomMission.room]?.name} · Missão
-            </p>
-            <p className="font-display font-bold">{roomMission.title}</p>
-            <p className="mt-0.5 text-xs text-white/75">{roomMission.intro}</p>
-            {roomPeople.length > 0 && (
-              <p className="mt-1.5 text-[11px] text-white/60">
-                Na sala: {roomPeople.map((npc) => npc.name).join(", ")}
-              </p>
-            )}
-            {roomMission.type === "collect" ? (
-              <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-200">
-                <Sparkles className="h-3.5 w-3.5" /> Encontre: {roomMission.itemName} (o objeto
-                brilhante)
-              </p>
-            ) : (
-              <button
-                type="button"
-                onClick={() => startMission(roomMission)}
-                className="mt-2 w-full rounded-xl bg-gradient-to-r from-amber-400 to-orange-400 py-2.5 text-sm font-bold text-[#1c1206]"
-              >
-                Começar missão
-              </button>
-            )}
-          </motion.div>
-        ) : roomMission && done[roomMission.id] ? (
-          <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/90 px-3 py-1.5 text-xs font-bold">
-            <Check className="h-3.5 w-3.5" /> {roomById[roomMission.room]?.name}: missão concluída
-          </div>
-        ) : !route && !showWelcome ? (
-          <div className="flex max-w-full items-center gap-1.5 rounded-full bg-[#120e24]/80 px-3 py-1.5 text-xs backdrop-blur">
-            <MapPin className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-            <span className="truncate">
-              Siga a seta até a <b>ENTRADA</b>
-            </span>
-          </div>
-        ) : nextMission ? (
-          <div className="flex max-w-full items-center gap-1.5 rounded-full bg-[#120e24]/80 px-3 py-1.5 text-xs backdrop-blur">
-            <MapPin className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-            <span className="truncate">
-              Próxima: <b>{roomById[nextMission.room]?.name}</b> · siga a seta amarela
-            </span>
-          </div>
         ) : null}
       </div>
 
@@ -553,201 +650,76 @@ export function SchoolGameScreen({
         )}
       </AnimatePresence>
 
-      {/* Controles */}
-      <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] left-4 z-10">
-        <Joystick input={input} disabled={paused} />
-      </div>
-      <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10 h-40 w-44">
-        <div className="absolute bottom-0 right-0">
-          <ActionButton
-            label="Pular"
-            big
-            disabled={paused}
-            onPress={() => (controls.current.jump = true)}
-          >
-            <ChevronsUp className="h-6 w-6" />
-          </ActionButton>
-        </div>
-        <div className="absolute right-3 top-0">
-          <ActionButton
-            label={runToggle ? "Correr" : "Andar"}
-            active={runToggle}
-            disabled={paused}
-            onPress={() => setRunToggle((value) => !value)}
-          >
-            <Zap className="h-5 w-5" />
-          </ActionButton>
-        </div>
-      </div>
-      <p className="pointer-events-none absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 rounded-lg bg-[#120e24]/70 px-3 py-1.5 text-xs text-white/80 md:block">
-        Clique na tela para olhar com o mouse · WASD/setas: andar · Shift: correr · Espaço: pular ·
-        Esc: soltar o mouse
-      </p>
-      <p className="pointer-events-none absolute left-1/2 top-24 z-10 -translate-x-1/2 rounded-lg bg-[#120e24]/60 px-3 py-1 text-[11px] text-white/80 md:hidden">
-        Arraste a tela para olhar ao redor
-      </p>
+      {/* Controles touch (celular/tablet): joystick à esquerda, Pular/Correr à direita.
+          O resto da tela é a área de arrastar para girar a câmera. */}
+      {touch && (
+        <>
+          <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] z-10">
+            <Joystick input={input} disabled={paused} />
+          </div>
+          <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] z-10 h-40 w-44 short:h-32">
+            <div className="absolute bottom-0 right-0">
+              <ActionButton
+                label="Pular"
+                big
+                disabled={paused}
+                onPress={() => (controls.current.jump = true)}
+              >
+                <ChevronsUp className="h-6 w-6" />
+              </ActionButton>
+            </div>
+            <div className="absolute right-3 top-0">
+              <ActionButton
+                label={runToggle ? "Correr" : "Andar"}
+                active={runToggle}
+                disabled={paused}
+                onPress={() => setRunToggle((value) => !value)}
+              >
+                <Zap className="h-5 w-5" />
+              </ActionButton>
+            </div>
+          </div>
+          <p className="pointer-events-none absolute left-1/2 top-24 z-10 -translate-x-1/2 whitespace-nowrap rounded-lg bg-[#120e24]/60 px-3 py-1 text-[11px] text-white/80 short:top-16">
+            Arraste a tela para olhar ao redor
+          </p>
+        </>
+      )}
+      {!touch && (
+        <p className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-[#120e24]/70 px-3 py-1.5 text-center text-xs text-white/80">
+          Clique na tela para olhar com o mouse · WASD/setas: andar · Shift: correr · Espaço: pular
+          · Esc: soltar o mouse
+        </p>
+      )}
 
-      {/* ---------------- Modal de missão ---------------- */}
+      {/* ---------------- Parada da trilha / sala de DS ---------------- */}
       <AnimatePresence>
-        {activeMission && activeMission.type !== "collect" && (
-          <motion.div
-            className="absolute inset-0 z-30 flex items-end justify-center bg-[#0f0b1e]/70 p-3 backdrop-blur-sm sm:items-center"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <motion.section
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="mission-title"
-              initial={{ y: 40, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 30, opacity: 0 }}
-              className="max-h-[88dvh] w-full max-w-lg overflow-y-auto rounded-3xl border border-violet-300/25 bg-[#171126] p-5 shadow-2xl"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-mono text-[10px] uppercase tracking-widest text-amber-300">
-                    {roomById[activeMission.room]?.name}
-                  </p>
-                  <h2 id="mission-title" className="font-display text-xl font-bold">
-                    {activeMission.title}
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  aria-label="Fechar missão"
-                  onClick={() => setOpenMission(null)}
-                  className="rounded-lg border border-white/10 p-2"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              {activeMission.type === "reflection" && courseContent[activeMission.room] && (
-                <div className="mt-3 rounded-2xl border border-violet-300/20 bg-violet-500/10 p-3">
-                  <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-violet-200">
-                    <BookOpen className="h-3.5 w-3.5" /> O que você aprende no{" "}
-                    {courseContent[activeMission.room]!.year}
-                  </p>
-                  <ul className="mt-2 space-y-2">
-                    {courseContent[activeMission.room]!.topics.map((topic) => (
-                      <li key={topic.name} className="text-sm">
-                        <b className="text-white">{topic.name}</b>
-                        <span className="block text-white/70">{topic.text}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  {courseContent[activeMission.room]!.highlight && (
-                    <div className="mt-3 rounded-xl border border-amber-300/50 bg-amber-400/10 p-3 text-sm">
-                      <p className="flex items-center gap-1.5 font-bold text-amber-300">
-                        <Star className="h-3.5 w-3.5 fill-current" /> Destaque:{" "}
-                        {courseContent[activeMission.room]!.highlight!.name}
-                      </p>
-                      <p className="mt-1 text-white/80">
-                        {courseContent[activeMission.room]!.highlight!.text}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-              {activeMission.type === "reflection" ? (
-                <p className="mt-3 font-semibold text-white/90">{activeMission.question}</p>
-              ) : (
-                <p className="mt-3 text-white/85">{activeMission.question}</p>
-              )}
-
-              {activeMission.type === "quiz" && (
-                <div className="mt-4 space-y-2">
-                  {activeMission.options.map((option, index) => {
-                    const isWrong = quiz.wrong.includes(index);
-                    const isRight = quiz.solved && index === activeMission.answer;
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        disabled={quiz.solved || isWrong}
-                        onClick={() => {
-                          if (index === activeMission.answer)
-                            setQuiz((q) => ({ ...q, solved: true }));
-                          else setQuiz((q) => ({ ...q, wrong: [...q.wrong, index] }));
-                        }}
-                        className={`w-full rounded-xl border px-4 py-3 text-left text-sm font-semibold transition ${
-                          isRight
-                            ? "border-emerald-300 bg-emerald-500/25"
-                            : isWrong
-                              ? "border-rose-400/60 bg-rose-500/15 text-white/50 line-through"
-                              : "border-white/15 bg-white/[0.05] active:scale-[0.99]"
-                        }`}
-                      >
-                        {option}
-                      </button>
-                    );
-                  })}
-                  {quiz.wrong.length > 0 && !quiz.solved && (
-                    <p className="text-sm text-rose-300">Não é essa. Tente de novo!</p>
-                  )}
-                  {quiz.solved && (
-                    <div className="rounded-xl border border-emerald-300/40 bg-emerald-500/10 p-3 text-sm">
-                      <p className="font-bold text-emerald-300">Resposta certa!</p>
-                      <p className="mt-1 text-white/80">{activeMission.explanation}</p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const xp =
-                            XP_PER_MISSION + (quiz.wrong.length === 0 ? XP_FIRST_TRY_BONUS : 0);
-                          complete(activeMission, xp, activeMission.explanation);
-                          setOpenMission(null);
-                        }}
-                        className="mt-3 w-full rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 py-3 font-bold"
-                      >
-                        Concluir missão
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeMission.type === "reflection" && (
-                <div className="mt-4">
-                  <label htmlFor="reflection" className="text-sm font-medium text-white/80">
-                    Sua resposta
-                  </label>
-                  <textarea
-                    id="reflection"
-                    rows={4}
-                    maxLength={1000}
-                    value={draft}
-                    onChange={(event) => setDraft(event.currentTarget.value)}
-                    placeholder="Escreva aqui..."
-                    className="mt-2 w-full resize-y rounded-xl border border-white/10 bg-[#0f0b1e] px-4 py-3 text-white outline-none placeholder:text-white/35 focus:border-violet-400"
-                  />
-                  <button
-                    type="button"
-                    disabled={draft.trim().length < 3}
-                    onClick={() =>
-                      finishReflection(activeMission, isSkip(draft) ? null : draft.trim())
-                    }
-                    className="mt-3 w-full rounded-xl bg-gradient-to-r from-violet-600 to-purple-500 py-3 font-bold disabled:opacity-40"
-                  >
-                    {route === "curso" && activeMission.room === COURSE_ROOMS[2]
-                      ? quizDone
-                        ? "Salvar e concluir"
-                        : "Salvar e ir para o quiz"
-                      : route === "curso"
-                        ? "Salvar e ir para a próxima sala"
-                        : "Salvar e concluir"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => finishReflection(activeMission, null)}
-                    className="mt-2 w-full rounded-xl border border-white/15 py-2.5 text-sm font-semibold text-white/80"
-                  >
-                    {SKIP_TEXT}
-                  </button>
-                </div>
-              )}
-            </motion.section>
-          </motion.div>
+        {activeMission?.type === "visit" && (
+          <VisitCard
+            key={activeMission.id}
+            mission={activeMission}
+            step={trail.indexOf(activeMission) + 1}
+            total={trail.length}
+            onContinue={() => {
+              complete(activeMission, XP_PER_MISSION, null);
+              setOpenMission(null);
+              continueTour(activeMission);
+            }}
+          />
+        )}
+        {activeMission?.type === "expect" && route && (
+          <ExpectationPanel
+            key={activeMission.id}
+            route={route}
+            roomId={activeMission.room}
+            nextLabel={
+              activeMission.room !== COURSE_ROOMS[COURSE_ROOMS.length - 1]
+                ? "Você vai para a próxima sala automaticamente."
+                : route === "curso"
+                  ? "Em seguida: o quiz final do curso."
+                  : "Em seguida: fim da visita pela escola."
+            }
+            onSubmit={(answer) => finishExpectation(activeMission, answer)}
+          />
         )}
       </AnimatePresence>
 
@@ -755,7 +727,7 @@ export function SchoolGameScreen({
       <AnimatePresence>
         {showWelcome && (
           <motion.div
-            className="absolute inset-0 z-30 flex items-end justify-center bg-[#0f0b1e]/70 p-3 backdrop-blur-sm sm:items-center"
+            className="absolute inset-0 z-30 flex items-center justify-center bg-[#0f0b1e]/70 p-3 backdrop-blur-sm"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -767,7 +739,7 @@ export function SchoolGameScreen({
               initial={{ y: 40, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 30, opacity: 0 }}
-              className="max-h-[88dvh] w-full max-w-lg overflow-y-auto rounded-3xl border border-violet-300/25 bg-[#171126] p-5 text-center shadow-2xl"
+              className="game-card max-h-[85dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-3xl border border-violet-300/25 bg-[#171126] p-5 short:p-4 text-center shadow-2xl"
             >
               <div className="flex justify-center">
                 <GuidePortrait size="lg" />
@@ -801,7 +773,7 @@ export function SchoolGameScreen({
       <AnimatePresence>
         {showPortaria && (
           <motion.div
-            className="absolute inset-0 z-30 flex items-end justify-center bg-[#0f0b1e]/70 p-3 backdrop-blur-sm sm:items-center"
+            className="absolute inset-0 z-30 flex items-center justify-center bg-[#0f0b1e]/70 p-3 backdrop-blur-sm"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -813,7 +785,7 @@ export function SchoolGameScreen({
               initial={{ y: 40, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 30, opacity: 0 }}
-              className="max-h-[88dvh] w-full max-w-lg overflow-y-auto rounded-3xl border border-violet-300/25 bg-[#171126] p-5 text-center shadow-2xl"
+              className="game-card max-h-[85dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-3xl border border-violet-300/25 bg-[#171126] p-5 short:p-4 text-center shadow-2xl"
             >
               <div className="flex justify-center">
                 <GuidePortrait size="lg" />
@@ -836,9 +808,11 @@ export function SchoolGameScreen({
                   }}
                   className="flex flex-col items-center gap-1 rounded-2xl border border-white/15 bg-white/[0.05] p-4 font-bold active:scale-[0.99]"
                 >
-                  <School className="h-6 w-6 text-emerald-300" />A escola
+                  <School className="h-6 w-6 text-emerald-300" />
+                  Conhecer a Escola
                   <span className="text-xs font-normal text-white/60">
-                    Auditório, biblioteca, laboratórios, refeitório, quadra e muito mais
+                    Tour guiado: Auditório, Sala dos Professores, laboratórios, quadra e as salas do
+                    1º, 2º e 3º ano
                   </span>
                 </button>
                 <button
@@ -848,9 +822,10 @@ export function SchoolGameScreen({
                   }}
                   className="flex flex-col items-center gap-1 rounded-2xl bg-gradient-to-br from-violet-600 to-purple-500 p-4 font-bold active:scale-[0.99]"
                 >
-                  <GraduationCap className="h-6 w-6 text-amber-300" />O curso de DS
+                  <GraduationCap className="h-6 w-6 text-amber-300" />
+                  Conhecer o Curso
                   <span className="text-xs font-normal text-white/80">
-                    As salas do 1º, 2º e 3º ano, um quiz e o ranking
+                    Desenvolvimento de Sistemas: as salas do 1º, 2º e 3º ano, quiz final e ranking
                   </span>
                 </button>
               </div>
@@ -863,7 +838,7 @@ export function SchoolGameScreen({
       <AnimatePresence>
         {openLab && activeLab && (
           <motion.div
-            className="absolute inset-0 z-30 flex items-end justify-center bg-[#0f0b1e]/70 p-3 backdrop-blur-sm sm:items-center"
+            className="absolute inset-0 z-30 flex items-center justify-center bg-[#0f0b1e]/70 p-3 backdrop-blur-sm"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -875,7 +850,7 @@ export function SchoolGameScreen({
               initial={{ y: 40, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 30, opacity: 0 }}
-              className="max-h-[88dvh] w-full max-w-lg overflow-y-auto rounded-3xl border border-violet-300/25 bg-[#171126] p-5 shadow-2xl"
+              className="game-card max-h-[85dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-3xl border border-violet-300/25 bg-[#171126] p-5 short:p-4 shadow-2xl"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">
@@ -941,7 +916,7 @@ export function SchoolGameScreen({
               onClick={(event) => event.stopPropagation()}
               initial={{ y: 20 }}
               animate={{ y: 0 }}
-              className="flex max-h-[92dvh] w-full max-w-md flex-col rounded-3xl border border-white/15 bg-[#171126] p-4"
+              className="flex max-h-[85dvh] w-full max-w-md flex-col overflow-y-auto overscroll-contain rounded-3xl border border-white/15 bg-[#171126] p-4"
             >
               <div className="flex items-center justify-between">
                 <h2 id="map-title" className="font-display text-lg font-bold">
@@ -956,7 +931,7 @@ export function SchoolGameScreen({
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <SchoolMap done={done} nextRoomId={nextRoomId} player={mapSnapshot} />
+              <SchoolMap done={done} trail={trail} nextRoomId={nextRoomId} player={mapSnapshot} />
               <ol className="mt-3 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
                 {trail.map((mission, index) => (
                   <li
@@ -984,9 +959,9 @@ export function SchoolGameScreen({
         )}
       </AnimatePresence>
 
-      {/* ---------------- Final ---------------- */}
+      {/* ---------------- Fim da visita (modo escola) ---------------- */}
       <AnimatePresence>
-        {showFinal && (
+        {schoolEnd && (
           <motion.div
             className="absolute inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[#0f0b1e]/85 p-4 backdrop-blur"
             initial={{ opacity: 0 }}
@@ -994,64 +969,48 @@ export function SchoolGameScreen({
             exit={{ opacity: 0 }}
           >
             <motion.section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="school-end-title"
               initial={{ scale: 0.95, y: 20 }}
               animate={{ scale: 1, y: 0 }}
-              className="my-auto w-full max-w-lg rounded-3xl border border-violet-300/25 bg-[#171126] p-6 text-center"
+              className="game-card my-auto max-h-[85dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-3xl border border-violet-300/25 bg-[#171126] p-6 text-center short:p-4"
             >
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-[#1c1206]">
-                <Flag className="h-7 w-7" />
+              <div className="flex justify-center">
+                <GuidePortrait size="lg" />
               </div>
-              <p className="mt-3 font-mono text-xs uppercase tracking-widest text-amber-300">
-                Escola explorada!
+              <p className="mt-3 flex items-center justify-center gap-1.5 font-mono text-xs uppercase tracking-widest text-amber-300">
+                <Flag className="h-3.5 w-3.5" /> Visita concluída
               </p>
-              <h2 className="font-display text-2xl font-bold">Meu Mapa do Futuro na EEEP</h2>
-              <p className="mt-1 text-white/70">
-                {player.nome}, você completou as {trail.length} missões e ganhou{" "}
-                <b className="text-amber-300">{totalXp} XP</b>.
+              <h2 id="school-end-title" className="font-display text-2xl font-bold">
+                Obrigado pela visita, {player.nome}!
+              </h2>
+              <p className="mt-3 text-white/80">
+                Você conheceu o Auditório, a Sala dos Professores, os laboratórios, a quadra e as
+                salas do 1º, 2º e 3º ano da EEEP Dr. Salomão Alves de Moura. Esperamos você por
+                aqui!
               </p>
-              <ol className="mt-4 space-y-2 text-left">
-                {trail
-                  .filter((mission) => mission.type === "reflection")
-                  .map((mission) => (
-                    <li
-                      key={mission.id}
-                      className="rounded-xl border border-white/10 bg-white/[0.04] p-3"
-                    >
-                      <p className="text-sm font-semibold">{mission.title}</p>
-                      <p className="mt-1 whitespace-pre-wrap break-words text-sm text-white/65">
-                        {done[mission.id]?.answer ?? (done[mission.id]?.skipped ? SKIP_TEXT : "—")}
-                      </p>
-                    </li>
-                  ))}
-              </ol>
-              <div className="mt-5 flex flex-wrap justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowFinal(false)}
-                  className="rounded-xl border border-white/15 px-5 py-3 text-sm font-semibold"
-                >
-                  Continuar explorando
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowFinal(false);
-                    setShowQuiz(true);
-                  }}
-                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-orange-400 px-5 py-3 text-sm font-bold text-[#1c1206]"
-                >
-                  <GraduationCap className="h-4 w-4" />{" "}
-                  {quizDone ? "Ver ranking" : "Quiz do curso e ranking"}
-                </button>
+              <p className="mt-1 text-sm text-white/55">— {guide.name}, seu guia</p>
+              <div className={`mt-5 grid gap-3 ${concluiuCurso ? "" : "sm:grid-cols-2"}`}>
+                {/* o curso já foi feito nesta sessão: só resta voltar ao início */}
+                {!concluiuCurso && (
+                  <button
+                    type="button"
+                    onClick={switchToCourse}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-orange-400 py-3 font-bold text-[#1c1206]"
+                  >
+                    <GraduationCap className="h-4 w-4" /> Conhecer o Curso
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
                     stop();
                     onExit();
                   }}
-                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-500 px-5 py-3 text-sm font-bold"
+                  className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-500 py-3 font-bold"
                 >
-                  <RotateCcw className="h-4 w-4" /> Jogar de novo
+                  <Home className="h-4 w-4" /> Voltar ao Início
                 </button>
               </div>
             </motion.section>
@@ -1064,7 +1023,7 @@ export function SchoolGameScreen({
         {teleporting && (
           <motion.div
             className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-[#0f0b1e]"
-            initial={{ opacity: 0 }}
+            initial={{ opacity: coverNow.current ? 1 : 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4 }}
@@ -1074,14 +1033,15 @@ export function SchoolGameScreen({
         )}
       </AnimatePresence>
 
-      {/* ---------------- Quiz do curso + ranking ---------------- */}
+      {/* ---------------- Quiz final do curso + ranking ---------------- */}
       <AnimatePresence>
-        {showQuiz && (
+        {quiz && (
           <CourseQuiz
             player={player}
-            mode={quizDone ? "blocked" : "quiz"}
-            onFinished={() => setQuizDone(true)}
-            onClose={() => setShowQuiz(false)}
+            mode={quiz.mode}
+            previous={quiz.previous}
+            onFinish={finishQuiz}
+            onSchool={concluiuEscola ? null : switchToSchool}
             onRestart={() => {
               stop();
               onExit();
@@ -1089,7 +1049,27 @@ export function SchoolGameScreen({
           />
         )}
       </AnimatePresence>
+      {/* Celular/tablet em pé: pede para deitar o aparelho (some ao virar). Necessário no
+          iPhone, onde o Safari não deixa travar a orientação. */}
+      {touch && <RotateHint />}
     </main>
+  );
+}
+
+function RotateHint() {
+  return (
+    <div
+      role="alert"
+      className="absolute inset-0 z-[100] hidden flex-col items-center justify-center gap-5 bg-[#0f0b1e]/95 px-8 text-center backdrop-blur portrait:flex"
+    >
+      <Smartphone className="animate-rotate-phone h-20 w-20 text-violet-300" strokeWidth={1.5} />
+      <div>
+        <p className="font-display text-2xl font-bold">Gire o celular</p>
+        <p className="mt-2 text-white/75">
+          Deite o aparelho na horizontal para ver a escola inteira e jogar melhor.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -1112,10 +1092,12 @@ const MAP_LABELS: Record<string, string> = {
 
 function SchoolMap({
   done,
+  trail,
   nextRoomId,
   player,
 }: {
   done: Done;
+  trail: Mission[];
   nextRoomId: string | null;
   player: Vec2;
 }) {
@@ -1139,7 +1121,7 @@ function SchoolMap({
         ))}
       </div>
       <svg
-        viewBox="-21 -36 42 60"
+        viewBox="-21 -37.5 42 61.5"
         className="max-h-[45dvh] w-full rounded-xl bg-[#8cbf5f]"
         role="img"
         aria-label={`Mapa da escola · ${floor === 1 ? "2º andar" : "térreo"}`}
@@ -1211,7 +1193,7 @@ function SchoolMap({
           .filter((room) => roomLevel(room) === floor)
           .map((room) => {
             const [sx, sz] = worldSize(room);
-            const mission = missionByRoom[room.id];
+            const mission = trail.find((m) => m.room === room.id);
             const isDone = mission ? Boolean(done[mission.id]) : false;
             return (
               <g key={room.id}>

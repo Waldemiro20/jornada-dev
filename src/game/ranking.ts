@@ -5,8 +5,8 @@
  * computador/celular — por exemplo, no estande da Expotec — entram no mesmo
  * ranking. Para um ranking compartilhado entre aparelhos, troque estas
  * funções por chamadas a um banco de dados.
- * Só guardamos nome, localidade e um código embaralhado (hash) do WhatsApp,
- * usado para saber se a pessoa já fez o quiz — o número em si nunca é salvo.
+ * Guardamos nome, localidade e o nome normalizado (`key`), que impede o mesmo
+ * jogador de responder o quiz mais de uma vez.
  */
 
 export type RankEntry = {
@@ -19,7 +19,7 @@ export type RankEntry = {
   /** segundos gastos no quiz (desempate) */
   tempo: number;
   data: string;
-  /** hash do WhatsApp (identifica quem já fez o quiz) */
+  /** nome normalizado (identifica quem já fez o quiz) */
   key?: string;
 };
 
@@ -41,27 +41,21 @@ function isEntry(value: unknown): value is RankEntry {
 }
 
 /**
- * Identificação do jogador a partir do WhatsApp: só os dígitos, sem o 55 do Brasil,
- * passados por um hash (cyrb53) para não guardar o número.
+ * Identificação do jogador para o bloqueio do quiz: o nome completo digitado,
+ * em minúsculas e sem espaços extras (ex.: "  David   Lucas " → "david lucas").
  */
-export function playerKey(contato: string) {
-  let digits = contato.replace(/\D/g, "");
-  if (digits.length > 11 && digits.startsWith("55")) digits = digits.slice(2);
-  let h1 = 0xdeadbeef ^ 7;
-  let h2 = 0x41c6ce57 ^ 7;
-  for (const ch of `eeep-sam:${digits}`) {
-    const c = ch.charCodeAt(0);
-    h1 = Math.imul(h1 ^ c, 2654435761);
-    h2 = Math.imul(h2 ^ c, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+export function playerKey(nome: string) {
+  return nome.normalize("NFC").trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
 }
 
-/** O jogador com este código já concluiu o quiz? */
+/** Resultado já registrado para este jogador (cada nome só faz o quiz uma vez). */
+export function findPlayed(key: string): RankEntry | undefined {
+  return loadRanking().find((entry) => entry.key === key);
+}
+
+/** O jogador com este nome já concluiu o quiz? */
 export function hasPlayed(key: string) {
-  return loadRanking().some((entry) => entry.key === key);
+  return findPlayed(key) !== undefined;
 }
 
 export function sortRanking(list: RankEntry[]) {
@@ -103,4 +97,32 @@ export function saveScore(entry: Omit<RankEntry, "id" | "data">): {
     ranking: ranking.some((r) => r.id === full.id) ? ranking : [...ranking, full],
     id: full.id,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Expectativas das salas de DS                                        */
+/* ------------------------------------------------------------------ */
+
+export type Expectation = {
+  nome: string;
+  modo: "escola" | "curso";
+  sala: string;
+  /** null = "Prefiro não responder" */
+  resposta: string | null;
+  data: string;
+};
+
+const EXPECT_KEY = "jornada-eeep:expectativas:v1";
+
+/** Guarda a resposta de expectativas (no navegador), para a escola consultar depois. */
+export function saveExpectation(entry: Omit<Expectation, "data">) {
+  try {
+    const raw = window.localStorage.getItem(EXPECT_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(parsed) ? (parsed as Expectation[]) : [];
+    list.push({ ...entry, data: new Date().toISOString() });
+    window.localStorage.setItem(EXPECT_KEY, JSON.stringify(list.slice(-1000)));
+  } catch {
+    /* armazenamento indisponível: a resposta vale só para esta sessão */
+  }
 }

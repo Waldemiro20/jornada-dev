@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { LoginScreen, type Player } from "@/components/game/LoginScreen";
 import type { AvatarLook } from "@/game/avatar";
 import { GameStageErrorBoundary } from "@/components/game/GameStageErrorBoundary";
+import { enterImmersive, exitImmersive } from "@/lib/immersive";
 
 const CharacterSelection = lazy(() =>
   import("@/components/game/CharacterSelection").then((module) => ({
@@ -42,6 +43,7 @@ function Index() {
   const [avatar, setAvatar] = useState<AvatarLook | null>(null);
   const [stage, setStage] = useState<"login" | "character" | "game">("login");
   const restart = () => {
+    exitImmersive();
     setAvatar(null);
     setPlayer(null);
     setStage("login");
@@ -93,6 +95,9 @@ function Index() {
               <CharacterSelection
                 player={player}
                 onSelect={(selectedAvatar) => {
+                  // ainda dentro do clique em "Começar jogo": celular/tablet vai para
+                  // tela cheia na horizontal (no PC não faz nada)
+                  enterImmersive();
                   setAvatar(selectedAvatar);
                   setStage("game");
                 }}

@@ -11,7 +11,7 @@ const PORTRAIT_SIZE = {
 /** Foto do guia Chrystian (public/chrystian.jpg), com a inicial caso a foto não carregue. */
 export function GuidePortrait({ size }: { size: keyof typeof PORTRAIT_SIZE }) {
   const [failed, setFailed] = useState(false);
-  const cls = `${PORTRAIT_SIZE[size]} shrink-0 overflow-hidden rounded-full border-2 border-violet-300 bg-gradient-to-br from-violet-500 to-purple-700 shadow`;
+  const cls = `guide-portrait guide-portrait-${size} ${PORTRAIT_SIZE[size]} shrink-0 overflow-hidden rounded-full border-2 border-violet-300 bg-gradient-to-br from-violet-500 to-purple-700 shadow`;
   return failed ? (
     <span className={`${cls} flex items-center justify-center font-display font-bold`}>
       {guide.name[0]}

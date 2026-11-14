@@ -10,6 +10,12 @@
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+/* telas baixas: celular deitado (paisagem) */
+@custom-variant short {
+  @media (max-height: 520px) {
+    @slot;
+  }
+}
 
 /*
  * Design system definition.
@@ -125,6 +131,16 @@
     border-color: var(--color-border);
   }
 
+  /* sem "quique" da página nem zoom por toque duplo no celular */
+  html,
+  body {
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+  }
+  button {
+    touch-action: manipulation;
+  }
+
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
@@ -137,4 +153,89 @@
 @utility tech-grid {
   background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
   background-size: 40px 40px;
+}
+
+/* aviso "gire o celular": aparelho deita e volta */
+@keyframes rotate-phone {
+  0%,
+  20% {
+    transform: rotate(0deg);
+  }
+  50%,
+  75% {
+    transform: rotate(-90deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+.animate-rotate-phone {
+  animation: rotate-phone 2.2s ease-in-out infinite;
+}
+
+/*
+ * Painéis dentro do jogo (trilha, salas de DS, expectativas, quiz, ranking) no celular:
+ * letras menores, cards compactos e centralizados. Fora de @layer de propósito, para
+ * vencer as classes utilitárias do Tailwind (text-xl, p-5, max-w-lg...) só nessas telas.
+ */
+@media (max-width: 920px), (max-height: 500px) {
+  .game-card {
+    max-width: min(28rem, 92vw);
+    max-height: 88dvh;
+    margin-inline: auto;
+    padding: 0.75rem 1rem;
+    border-radius: 1.25rem;
+    font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
+    line-height: 1.4;
+  }
+  .game-card-wide {
+    max-width: min(40rem, 94vw);
+    height: auto;
+  }
+  .game-card :is(h2, h3) {
+    font-size: clamp(0.95rem, 0.88rem + 0.4vw, 1.15rem);
+    line-height: 1.25;
+  }
+  .game-card :is(p, li, dt, dd, span, label, blockquote, textarea, input) {
+    font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
+  }
+  /* rótulos pequenos (ex.: "parada 2 de 9") continuam pequenos */
+  .game-card .text-\[10px\],
+  .game-card .text-\[11px\],
+  .game-card .text-xs {
+    font-size: 0.65rem;
+  }
+  .game-card button {
+    min-height: 44px;
+    padding-block: 0.55rem;
+    font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
+  }
+  .game-card button svg {
+    width: 1rem;
+    height: 1rem;
+  }
+  .game-card :is(.mt-5, .mt-4) {
+    margin-top: 0.75rem;
+  }
+  .game-card .mt-3 {
+    margin-top: 0.5rem;
+  }
+  .game-card .p-3 {
+    padding: 0.5rem 0.65rem;
+  }
+  .game-card img:not(.guide-portrait) {
+    max-height: 30dvh;
+    width: auto;
+    margin-inline: auto;
+  }
+  /* foto grande do guia: menor no celular */
+  .game-card .guide-portrait-lg {
+    width: 3.5rem;
+    height: 3.5rem;
+    font-size: 1.5rem;
+  }
+  .game-card .font-display.text-xl,
+  .game-card .font-display.text-2xl {
+    font-size: clamp(0.85rem, 0.8rem + 0.3vw, 1rem);
+  }
 }
