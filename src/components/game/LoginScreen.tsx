@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 export type Player = { nome: string; contato: string; local: string };
 
 /** Tempo mínimo (ms) que a tela de abertura fica visível. */
-const MIN_SPLASH_MS = 2800;
+const MIN_SPLASH_MS = 5000;
 
 /**
  * Tela de abertura: mostra só a logo e as fotos das turmas enquanto o jogo
