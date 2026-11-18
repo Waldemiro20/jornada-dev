@@ -530,9 +530,10 @@ function RankingBoard({
         </ol>
 
         <footer
-          className={`mt-5 grid shrink-0 gap-3 border-t border-white/10 pt-5 short:mt-3 short:pt-3 ${onSchool ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}
+          className={`mt-5 grid shrink-0 gap-3 border-t border-white/10 pt-5 short:mt-3 short:pt-3 ${onSchool ? "" : "sm:grid-cols-2"}`}
         >
-          {onSchool && (
+          {/* ainda falta a escola: só segue para ela; o fim do jogo vem depois */}
+          {onSchool ? (
             <button
               type="button"
               onClick={onSchool}
@@ -540,21 +541,24 @@ function RankingBoard({
             >
               <School className="h-5 w-5" /> Conhecer a Escola
             </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onExplore}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-600 to-cyan-500 px-6 py-4 font-display text-lg font-bold"
+              >
+                <Compass className="h-5 w-5" /> Explorar sozinho
+              </button>
+              <button
+                type="button"
+                onClick={onRestart}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-purple-500 px-6 py-4 font-display text-lg font-bold shadow-[0_0_24px_rgba(124,58,237,0.35)]"
+              >
+                <Home className="h-5 w-5" /> Voltar ao Início
+              </button>
+            </>
           )}
-          <button
-            type="button"
-            onClick={onExplore}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-600 to-cyan-500 px-6 py-4 font-display text-lg font-bold"
-          >
-            <Compass className="h-5 w-5" /> Explorar sozinho
-          </button>
-          <button
-            type="button"
-            onClick={onRestart}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-purple-500 px-6 py-4 font-display text-lg font-bold shadow-[0_0_24px_rgba(124,58,237,0.35)]"
-          >
-            <Home className="h-5 w-5" /> Voltar ao Início
-          </button>
         </footer>
       </motion.section>
     </motion.div>

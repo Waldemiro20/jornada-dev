@@ -1014,11 +1014,9 @@ export function SchoolGameScreen({
                 aqui!
               </p>
               <p className="mt-1 text-sm text-white/55">— {guide.name}, seu guia</p>
-              <div
-                className={`mt-5 grid gap-3 ${concluiuCurso ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
-              >
-                {/* o curso já foi feito nesta sessão: só resta voltar ao início */}
-                {!concluiuCurso && (
+              <div className={`mt-5 grid gap-3 ${concluiuCurso ? "sm:grid-cols-2" : ""}`}>
+                {/* ainda falta o curso: só segue para ele; o fim do jogo vem depois */}
+                {!concluiuCurso ? (
                   <button
                     type="button"
                     onClick={switchToCourse}
@@ -1026,24 +1024,27 @@ export function SchoolGameScreen({
                   >
                     <GraduationCap className="h-4 w-4" /> Conhecer o Curso
                   </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={exploreFreely}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-500 py-3 font-bold"
+                    >
+                      <Compass className="h-4 w-4" /> Explorar sozinho
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        stop();
+                        onExit();
+                      }}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-500 py-3 font-bold"
+                    >
+                      <Home className="h-4 w-4" /> Voltar ao Início
+                    </button>
+                  </>
                 )}
-                <button
-                  type="button"
-                  onClick={exploreFreely}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-500 py-3 font-bold"
-                >
-                  <Compass className="h-4 w-4" /> Explorar sozinho
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    stop();
-                    onExit();
-                  }}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-500 py-3 font-bold"
-                >
-                  <Home className="h-4 w-4" /> Voltar ao Início
-                </button>
               </div>
             </motion.section>
           </motion.div>
