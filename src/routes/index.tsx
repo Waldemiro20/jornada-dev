@@ -95,10 +95,11 @@ function Index() {
             <Suspense fallback={<StageLoading label="Carregando seleção de personagem..." />}>
               <CharacterSelection
                 player={player}
-                onSelect={(selectedAvatar) => {
+                onSelect={(selectedAvatar, nome) => {
                   // ainda dentro do clique em "Começar jogo": celular/tablet vai para
                   // tela cheia na horizontal (no PC não faz nada)
                   enterImmersive();
+                  setPlayer({ ...player, nome });
                   setAvatar(selectedAvatar);
                   setStage("game");
                 }}
@@ -121,13 +122,10 @@ function Index() {
   );
 }
 
-/**
- * Sem formulário: cada partida recebe um visitante com nome próprio
- * (o ranking usa o nome para saber quem já fez o quiz).
- */
+/** Jogador inicial; o nome é digitado na tela de criação do personagem. */
 function createGuestPlayer(): Player {
   const code = String(Math.floor(1000 + Math.random() * 9000));
-  return { nome: `Dev #${code}`, contato: `${Date.now()}${code}`, local: "EEEP" };
+  return { nome: "Dev", contato: `${Date.now()}${code}`, local: "EEEP" };
 }
 
 function StageLoading({ label }: { label: string }) {

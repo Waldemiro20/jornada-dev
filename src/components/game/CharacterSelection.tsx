@@ -2,7 +2,7 @@ import { Suspense, useEffect, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { ContactShadows, OrbitControls } from "@react-three/drei";
 import { motion } from "framer-motion";
-import { Check, Code2, Palette, Play, Shirt, UserRound } from "lucide-react";
+import { Check, Code2, Palette, Play, Shirt, User, UserRound } from "lucide-react";
 import { DevAvatar } from "./DevAvatar";
 import type { Player } from "./LoginScreen";
 import {
@@ -45,9 +45,12 @@ export function CharacterSelection({
   onSelect,
 }: {
   player: Player;
-  onSelect: (look: AvatarLook) => void;
+  onSelect: (look: AvatarLook, nome: string) => void;
 }) {
   const [look, setLook] = useState<AvatarLook>(defaultLook);
+  const [nome, setNome] = useState("");
+  const [nomeError, setNomeError] = useState("");
+  const nomeLimpo = nome.trim().replace(/\s+/g, " ");
   const [tab, setTab] = useState<Tab>("corpo");
 
   useEffect(() => setLook(loadLook()), []);
@@ -56,12 +59,16 @@ export function CharacterSelection({
   const outfit = outfitOptions.find((item) => item.id === look.outfit) ?? outfitOptions[0]!;
 
   const confirm = () => {
+    if (nomeLimpo.length < 2) {
+      setNomeError("Digite seu nome para começar");
+      return;
+    }
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(look));
     } catch {
       /* armazenamento indisponível: segue sem salvar */
     }
-    onSelect(look);
+    onSelect(look, nomeLimpo);
   };
 
   return (
@@ -78,9 +85,38 @@ export function CharacterSelection({
           </div>
           <div className="min-w-0">
             <h1 className="font-display text-xl font-bold sm:text-2xl">Crie seu personagem</h1>
-            <p className="truncate text-xs text-white/60">Olá, {player.nome}! Monte seu visual.</p>
+            <p className="truncate text-xs text-white/60">
+              {nomeLimpo ? `Olá, ${nomeLimpo}!` : "Olá, Dev!"} Monte seu visual.
+            </p>
           </div>
         </div>
+
+        <label className="mt-4 block">
+          <span className="text-sm font-medium text-white/80">Seu nome</span>
+          <div
+            className={`mt-1.5 flex items-center gap-3 rounded-xl border bg-white/[0.04] px-4 focus-within:border-violet-300 ${
+              nomeError ? "border-red-400/70" : "border-white/10"
+            }`}
+          >
+            <User className="h-5 w-5 shrink-0 text-violet-300" />
+            <input
+              type="text"
+              value={nome}
+              maxLength={40}
+              autoComplete="given-name"
+              placeholder="Ex.: Ana Dev"
+              onChange={(e) => {
+                setNome(e.target.value);
+                if (nomeError) setNomeError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirm();
+              }}
+              className="h-12 w-full bg-transparent text-white outline-none placeholder:text-white/35"
+            />
+          </div>
+          {nomeError && <span className="mt-1 block text-xs text-red-300">{nomeError}</span>}
+        </label>
 
         <div className="relative mt-4 h-[42vh] min-h-[260px] max-h-[380px] overflow-hidden rounded-[2rem] border border-violet-400/20 bg-[radial-gradient(ellipse_at_50%_60%,rgba(147,51,234,0.3),rgba(22,13,43,0.45)_58%,rgba(15,11,30,0.9))]">
           <Canvas
