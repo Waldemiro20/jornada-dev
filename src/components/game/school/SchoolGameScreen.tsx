@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Check,
   ChevronsUp,
+  Compass,
   FlaskConical,
   Flag,
   GraduationCap,
@@ -133,6 +134,8 @@ export function SchoolGameScreen({
    */
   const [concluiuCurso, setConcluiuCurso] = useState(false);
   const [concluiuEscola, setConcluiuEscola] = useState(false);
+  /** Fim do jogo: o jogador escolheu andar livre pela escola, sem tour nem missões. */
+  const [freeRoam, setFreeRoam] = useState(false);
 
   /* Modo "Conhecer o Curso": só as salas de DS. Modo "Conhecer a Escola": trilha guiada. */
   const trail = useMemo(() => (route === "curso" ? courseMissions : schoolTour), [route]);
@@ -258,6 +261,19 @@ export function SchoolGameScreen({
     resetRoute(courseMissions);
     setRoute("curso");
     teleportTo(COURSE_ROOMS[0], "Indo para a sala do 1º Desenvolvimento...");
+  };
+
+  /** Fecha a tela final (ranking ou fim da visita) e deixa o jogador andar livre. */
+  const exploreFreely = () => {
+    if (tourTimer.current !== null) window.clearTimeout(tourTimer.current);
+    tourTimer.current = null;
+    autopilot.current = null;
+    setWalkingTo(null);
+    setOpenMission(null);
+    setQuiz(null);
+    setSchoolEnd(false);
+    input.current = { x: 0, z: 0 };
+    setFreeRoam(true);
   };
 
   /** Próxima parada do tour depois de `mission` (modo escola). */
@@ -625,6 +641,13 @@ export function SchoolGameScreen({
           >
             <FlaskConical className="h-3.5 w-3.5" /> {roomById[currentRoom]?.name} · ver informações
           </button>
+        ) : freeRoam ? (
+          <div className="flex max-w-full items-center gap-1.5 rounded-full border border-sky-300/50 bg-[#120e24]/85 px-3 py-1.5 text-xs backdrop-blur">
+            <Compass className="h-3.5 w-3.5 shrink-0 text-sky-300" />
+            <span className="truncate">
+              Exploração livre · ande pela escola à vontade (<b>X</b> para sair)
+            </span>
+          </div>
         ) : null}
       </div>
 
@@ -991,7 +1014,9 @@ export function SchoolGameScreen({
                 aqui!
               </p>
               <p className="mt-1 text-sm text-white/55">— {guide.name}, seu guia</p>
-              <div className={`mt-5 grid gap-3 ${concluiuCurso ? "" : "sm:grid-cols-2"}`}>
+              <div
+                className={`mt-5 grid gap-3 ${concluiuCurso ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+              >
                 {/* o curso já foi feito nesta sessão: só resta voltar ao início */}
                 {!concluiuCurso && (
                   <button
@@ -1002,6 +1027,13 @@ export function SchoolGameScreen({
                     <GraduationCap className="h-4 w-4" /> Conhecer o Curso
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={exploreFreely}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-500 py-3 font-bold"
+                >
+                  <Compass className="h-4 w-4" /> Explorar sozinho
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -1042,6 +1074,7 @@ export function SchoolGameScreen({
             previous={quiz.previous}
             onFinish={finishQuiz}
             onSchool={concluiuEscola ? null : switchToSchool}
+            onExplore={exploreFreely}
             onRestart={() => {
               stop();
               onExit();

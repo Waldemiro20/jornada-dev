@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   BookOpen,
   Check,
+  Compass,
   Home,
   Lock,
   MapPin,
@@ -219,6 +220,7 @@ export function CourseQuiz({
   onFinish,
   onRestart,
   onSchool,
+  onExplore,
 }: {
   player: Player;
   mode: "quiz" | "blocked";
@@ -232,6 +234,8 @@ export function CourseQuiz({
    * null quando a escola já foi visitada nesta sessão (só "Voltar ao Início")
    */
   onSchool: (() => void) | null;
+  /** fecha o ranking e deixa o jogador andar livre pela escola */
+  onExplore: () => void;
 }) {
   const startedAt = useRef(Date.now());
   const [stage, setStage] = useState<"intro" | "question" | "blocked" | "ranking">(
@@ -255,6 +259,7 @@ export function CourseQuiz({
         message={finished ? GOOD_LUCK_MESSAGE : undefined}
         onRestart={onRestart}
         onSchool={onSchool}
+        onExplore={onExplore}
       />
     );
   }
@@ -428,6 +433,7 @@ function RankingBoard({
   message,
   onRestart,
   onSchool,
+  onExplore,
 }: {
   ranking: RankEntry[];
   me: RankEntry | null;
@@ -435,6 +441,7 @@ function RankingBoard({
   message?: string | undefined;
   onRestart: () => void;
   onSchool: (() => void) | null;
+  onExplore: () => void;
 }) {
   const myId = mine?.id ?? null;
   const position = myId ? ranking.findIndex((r) => r.id === myId) + 1 : 0;
@@ -523,7 +530,7 @@ function RankingBoard({
         </ol>
 
         <footer
-          className={`mt-5 grid shrink-0 gap-3 border-t border-white/10 pt-5 short:mt-3 short:pt-3 ${onSchool ? "sm:grid-cols-2" : ""}`}
+          className={`mt-5 grid shrink-0 gap-3 border-t border-white/10 pt-5 short:mt-3 short:pt-3 ${onSchool ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}
         >
           {onSchool && (
             <button
@@ -534,6 +541,13 @@ function RankingBoard({
               <School className="h-5 w-5" /> Conhecer a Escola
             </button>
           )}
+          <button
+            type="button"
+            onClick={onExplore}
+            className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-600 to-cyan-500 px-6 py-4 font-display text-lg font-bold"
+          >
+            <Compass className="h-5 w-5" /> Explorar sozinho
+          </button>
           <button
             type="button"
             onClick={onRestart}
