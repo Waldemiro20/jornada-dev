@@ -119,3 +119,14 @@ export function toggleImmersive(): void {
   if (isFullscreen()) exitImmersive();
   else requestFullscreenLandscape();
 }
+
+/** Aberto pelo ícone da Tela de Início (como app): já está sem as barras do navegador. */
+export function isStandaloneApp(): boolean {
+  if (typeof window === "undefined") return false;
+  const nav = navigator as Navigator & { standalone?: boolean };
+  return (
+    nav.standalone === true ||
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.matchMedia("(display-mode: fullscreen)").matches
+  );
+}

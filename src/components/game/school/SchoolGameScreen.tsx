@@ -23,6 +23,7 @@ import {
 import {
   canFullscreen,
   inFullscreen,
+  isStandaloneApp,
   isTouchDevice,
   onFullscreenChange,
   toggleImmersive,
@@ -100,6 +101,8 @@ export function SchoolGameScreen({
   const [fullscreenOk] = useState(canFullscreen);
   /** iPhone: sem tela cheia para sites; o botão mostra como adicionar à Tela de Início. */
   const [showHomeTip, setShowHomeTip] = useState(false);
+  /** Aberto pelo ícone da Tela de Início: já está sem barras, o botão não é preciso. */
+  const [standalone] = useState(isStandaloneApp);
   const [fullscreen, setFullscreen] = useState(inFullscreen);
   useEffect(() => onFullscreenChange(() => setFullscreen(inFullscreen())), []);
 
@@ -601,7 +604,7 @@ export function SchoolGameScreen({
       </header>
 
       {/* Botão de tela cheia: no meio do topo, bem à vista (estilo YouTube) */}
-      {(fullscreenOk || touch) && (
+      {(fullscreenOk || (touch && !standalone)) && (
         <div className="pointer-events-none absolute inset-x-0 top-[max(0.75rem,env(safe-area-inset-top))] z-20 flex justify-center">
           <button
             type="button"
