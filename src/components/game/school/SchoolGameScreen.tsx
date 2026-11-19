@@ -97,7 +97,9 @@ export function SchoolGameScreen({
   /** celular/tablet: joystick, botões e arraste da câmera; no PC ficam escondidos */
   const [touch] = useState(isTouchDevice);
   /* Tela cheia (só celular/tablet): botão no topo e na tela "Gire o celular" */
-  const [fullscreenOk] = useState(() => isTouchDevice() && canFullscreen());
+  const [fullscreenOk] = useState(canFullscreen);
+  /** iPhone: sem tela cheia para sites; o botão mostra como adicionar à Tela de Início. */
+  const [showHomeTip, setShowHomeTip] = useState(false);
   const [fullscreen, setFullscreen] = useState(inFullscreen);
   useEffect(() => onFullscreenChange(() => setFullscreen(inFullscreen())), []);
 
@@ -584,16 +586,6 @@ export function SchoolGameScreen({
           >
             <MapIcon className="h-4 w-4" /> Mapa
           </button>
-          {fullscreenOk && (
-            <button
-              type="button"
-              aria-label={fullscreen ? "Sair da tela cheia" : "Tela cheia"}
-              onClick={toggleImmersive}
-              className="rounded-xl border border-white/20 bg-[#120e24]/80 p-2"
-            >
-              {fullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-            </button>
-          )}
           <button
             type="button"
             aria-label="Sair do jogo"
@@ -607,6 +599,39 @@ export function SchoolGameScreen({
           </button>
         </div>
       </header>
+
+      {/* Botão de tela cheia: no meio do topo, bem à vista (estilo YouTube) */}
+      {(fullscreenOk || touch) && (
+        <div className="pointer-events-none absolute inset-x-0 top-[max(0.75rem,env(safe-area-inset-top))] z-20 flex justify-center">
+          <button
+            type="button"
+            onClick={() => {
+              if (fullscreenOk) toggleImmersive();
+              else setShowHomeTip((v) => !v);
+            }}
+            className="pointer-events-auto flex items-center gap-1.5 rounded-xl border-2 border-violet-300/70 bg-violet-600/90 px-3 py-2 text-sm font-bold shadow-[0_0_18px_rgba(124,58,237,0.45)] active:scale-95"
+          >
+            {fullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+            {fullscreen ? "Sair da tela cheia" : "Tela cheia"}
+          </button>
+        </div>
+      )}
+      {showHomeTip && (
+        <div className="absolute inset-x-3 top-16 z-30 mx-auto max-w-sm rounded-2xl border border-violet-300/40 bg-[#171126]/95 p-4 text-sm shadow-2xl backdrop-blur">
+          <p className="font-bold">Jogar em tela cheia no iPhone</p>
+          <p className="mt-1 text-white/80">
+            No Safari, toque em <b>Compartilhar</b> e depois em <b>Adicionar à Tela de Início</b>.
+            Abra o jogo pelo ícone criado e deite o celular.
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowHomeTip(false)}
+            className="mt-3 w-full rounded-xl bg-violet-600 py-2 font-bold"
+          >
+            Entendi
+          </button>
+        </div>
+      )}
 
       {/* Objetivo atual (indicador no topo) */}
       <div className="pointer-events-none absolute inset-x-3 top-[5.5rem] z-10 flex justify-center">

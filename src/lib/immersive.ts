@@ -48,6 +48,11 @@ async function lockLandscape() {
  */
 export function enterImmersive(): void {
   if (!isTouchDevice()) return;
+  requestFullscreenLandscape();
+}
+
+/** Pede tela cheia; no celular/tablet também trava em paisagem. */
+function requestFullscreenLandscape(): void {
   try {
     const root = document.documentElement as FullscreenElement;
     if (isFullscreen()) {
@@ -112,5 +117,5 @@ export function onFullscreenChange(callback: () => void): () => void {
 /** Botão de tela cheia (estilo YouTube): entra (e deita o celular) ou sai. */
 export function toggleImmersive(): void {
   if (isFullscreen()) exitImmersive();
-  else enterImmersive();
+  else requestFullscreenLandscape();
 }
