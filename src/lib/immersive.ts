@@ -82,3 +82,35 @@ export function exitImmersive(): void {
     // sem suporte
   }
 }
+
+/** O navegador deixa a página entrar em tela cheia? (no iPhone/Safari, não) */
+export function canFullscreen(): boolean {
+  if (typeof document === "undefined") return false;
+  const root = document.documentElement as FullscreenElement;
+  const doc = document as FullscreenDocument & { webkitFullscreenEnabled?: boolean };
+  const enabled = document.fullscreenEnabled ?? doc.webkitFullscreenEnabled ?? false;
+  return Boolean(enabled && (root.requestFullscreen || root.webkitRequestFullscreen));
+}
+
+/** Está em tela cheia agora? */
+export function inFullscreen(): boolean {
+  if (typeof document === "undefined") return false;
+  return isFullscreen();
+}
+
+/** Avisa quando entra/sai da tela cheia (inclusive pelo botão voltar do celular). */
+export function onFullscreenChange(callback: () => void): () => void {
+  if (typeof document === "undefined") return () => undefined;
+  document.addEventListener("fullscreenchange", callback);
+  document.addEventListener("webkitfullscreenchange", callback);
+  return () => {
+    document.removeEventListener("fullscreenchange", callback);
+    document.removeEventListener("webkitfullscreenchange", callback);
+  };
+}
+
+/** Botão de tela cheia (estilo YouTube): entra (e deita o celular) ou sai. */
+export function toggleImmersive(): void {
+  if (isFullscreen()) exitImmersive();
+  else enterImmersive();
+}

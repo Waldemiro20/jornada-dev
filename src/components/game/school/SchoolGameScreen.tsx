@@ -6,6 +6,8 @@ import {
   ChevronsUp,
   Compass,
   FlaskConical,
+  Maximize,
+  Minimize,
   Flag,
   GraduationCap,
   Home,
@@ -18,7 +20,13 @@ import {
   Zap,
   Smartphone,
 } from "lucide-react";
-import { isTouchDevice } from "@/lib/immersive";
+import {
+  canFullscreen,
+  inFullscreen,
+  isTouchDevice,
+  onFullscreenChange,
+  toggleImmersive,
+} from "@/lib/immersive";
 import { SceneFallback, SchoolScene, type Controls, type Vec2 } from "./SchoolWorld";
 import { ActionButton, Joystick } from "./Controls";
 import { GuidePortrait } from "./GuidePortrait";
@@ -88,6 +96,10 @@ export function SchoolGameScreen({
   );
   /** celular/tablet: joystick, botões e arraste da câmera; no PC ficam escondidos */
   const [touch] = useState(isTouchDevice);
+  /* Tela cheia (só celular/tablet): botão no topo e na tela "Gire o celular" */
+  const [fullscreenOk] = useState(() => isTouchDevice() && canFullscreen());
+  const [fullscreen, setFullscreen] = useState(inFullscreen);
+  useEffect(() => onFullscreenChange(() => setFullscreen(inFullscreen())), []);
 
   /* Ao girar o aparelho, o iOS às vezes informa o tamanho antigo: força um novo resize
      depois que a rotação termina para o canvas (renderer + camera.aspect) se ajustar. */
@@ -572,6 +584,16 @@ export function SchoolGameScreen({
           >
             <MapIcon className="h-4 w-4" /> Mapa
           </button>
+          {fullscreenOk && (
+            <button
+              type="button"
+              aria-label={fullscreen ? "Sair da tela cheia" : "Tela cheia"}
+              onClick={toggleImmersive}
+              className="rounded-xl border border-white/20 bg-[#120e24]/80 p-2"
+            >
+              {fullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+            </button>
+          )}
           <button
             type="button"
             aria-label="Sair do jogo"
@@ -1085,12 +1107,12 @@ export function SchoolGameScreen({
       </AnimatePresence>
       {/* Celular/tablet em pé: pede para deitar o aparelho (some ao virar). Necessário no
           iPhone, onde o Safari não deixa travar a orientação. */}
-      {touch && <RotateHint />}
+      {touch && <RotateHint onFullscreen={fullscreenOk ? toggleImmersive : null} />}
     </main>
   );
 }
 
-function RotateHint() {
+function RotateHint({ onFullscreen }: { onFullscreen: (() => void) | null }) {
   return (
     <div
       role="alert"
@@ -1103,6 +1125,15 @@ function RotateHint() {
           Deite o aparelho na horizontal para ver a escola inteira e jogar melhor.
         </p>
       </div>
+      {onFullscreen && (
+        <button
+          type="button"
+          onClick={onFullscreen}
+          className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-purple-500 px-6 py-4 font-display text-lg font-bold shadow-[0_0_24px_rgba(124,58,237,0.35)]"
+        >
+          <Maximize className="h-5 w-5" /> Jogar em tela cheia
+        </button>
+      )}
     </div>
   );
 }
