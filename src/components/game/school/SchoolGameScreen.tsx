@@ -7,7 +7,6 @@ import {
   Compass,
   FlaskConical,
   Maximize,
-  Minimize,
   Flag,
   GraduationCap,
   Home,
@@ -20,13 +19,7 @@ import {
   Zap,
   Smartphone,
 } from "lucide-react";
-import {
-  canFullscreen,
-  inFullscreen,
-  isTouchDevice,
-  onFullscreenChange,
-  toggleImmersive,
-} from "@/lib/immersive";
+import { canFullscreen, isTouchDevice, toggleImmersive } from "@/lib/immersive";
 import { SceneFallback, SchoolScene, type Controls, type Vec2 } from "./SchoolWorld";
 import { ActionButton, Joystick } from "./Controls";
 import { GuidePortrait } from "./GuidePortrait";
@@ -98,8 +91,6 @@ export function SchoolGameScreen({
   const [touch] = useState(isTouchDevice);
   /* Tela cheia (só celular/tablet): botão no topo e na tela "Gire o celular" */
   const [fullscreenOk] = useState(canFullscreen);
-  const [fullscreen, setFullscreen] = useState(inFullscreen);
-  useEffect(() => onFullscreenChange(() => setFullscreen(inFullscreen())), []);
 
   /* Ao girar o aparelho, o iOS às vezes informa o tamanho antigo: força um novo resize
      depois que a rotação termina para o canvas (renderer + camera.aspect) se ajustar. */
@@ -598,19 +589,6 @@ export function SchoolGameScreen({
         </div>
       </header>
 
-      {/* Botão de tela cheia: no meio do topo, bem à vista (estilo YouTube) */}
-      {fullscreenOk && (
-        <div className="pointer-events-none absolute inset-x-0 top-[max(0.75rem,env(safe-area-inset-top))] z-20 flex justify-center">
-          <button
-            type="button"
-            onClick={toggleImmersive}
-            className="pointer-events-auto flex items-center gap-1.5 rounded-xl border-2 border-violet-300/70 bg-violet-600/90 px-3 py-2 text-sm font-bold shadow-[0_0_18px_rgba(124,58,237,0.45)] active:scale-95"
-          >
-            {fullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-            {fullscreen ? "Sair da tela cheia" : "Tela cheia"}
-          </button>
-        </div>
-      )}
       {/* Objetivo atual (indicador no topo) */}
       <div className="pointer-events-none absolute inset-x-3 top-[5.5rem] z-10 flex justify-center">
         {!route ? (

@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { SplashScreen, type Player } from "@/components/game/LoginScreen";
 import type { AvatarLook } from "@/game/avatar";
 import { GameStageErrorBoundary } from "@/components/game/GameStageErrorBoundary";
+import { FullscreenButton } from "@/components/game/FullscreenButton";
 import { enterImmersive, exitImmersive } from "@/lib/immersive";
 
 const loadCharacterSelection = () => import("@/components/game/CharacterSelection");
@@ -50,75 +51,78 @@ function Index() {
     setStage("login");
   };
   return (
-    <AnimatePresence mode="wait">
-      {stage === "game" && player && avatar ? (
-        <motion.div
-          key="game"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0 }}
-        >
-          <GameStageErrorBoundary
-            key="game-boundary"
-            fallback={(resetError) => (
-              <StageFailure
-                onBack={() => {
-                  resetError();
-                  restart();
-                }}
-              />
-            )}
+    <>
+      <FullscreenButton />
+      <AnimatePresence mode="wait">
+        {stage === "game" && player && avatar ? (
+          <motion.div
+            key="game"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
           >
-            <Suspense fallback={<StageLoading label="Abrindo os portões da EEEP..." />}>
-              <SchoolGameScreen player={player} avatar={avatar} onExit={restart} />
-            </Suspense>
-          </GameStageErrorBoundary>
-        </motion.div>
-      ) : stage === "character" && player ? (
-        <motion.div
-          key="character"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0 }}
-        >
-          <GameStageErrorBoundary
-            key="character-boundary"
-            fallback={(resetError) => (
-              <StageFailure
-                onBack={() => {
-                  resetError();
-                  restart();
-                }}
-              />
-            )}
+            <GameStageErrorBoundary
+              key="game-boundary"
+              fallback={(resetError) => (
+                <StageFailure
+                  onBack={() => {
+                    resetError();
+                    restart();
+                  }}
+                />
+              )}
+            >
+              <Suspense fallback={<StageLoading label="Abrindo os portões da EEEP..." />}>
+                <SchoolGameScreen player={player} avatar={avatar} onExit={restart} />
+              </Suspense>
+            </GameStageErrorBoundary>
+          </motion.div>
+        ) : stage === "character" && player ? (
+          <motion.div
+            key="character"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
           >
-            <Suspense fallback={<StageLoading label="Carregando seleção de personagem..." />}>
-              <CharacterSelection
-                player={player}
-                onSelect={(selectedAvatar, nome) => {
-                  // ainda dentro do clique em "Começar jogo": celular/tablet vai para
-                  // tela cheia na horizontal (no PC não faz nada)
-                  enterImmersive();
-                  setPlayer({ ...player, nome });
-                  setAvatar(selectedAvatar);
-                  setStage("game");
-                }}
-              />
-            </Suspense>
-          </GameStageErrorBoundary>
-        </motion.div>
-      ) : (
-        <motion.div key="login" exit={{ opacity: 0, scale: 0.98 }} transition={{ duration: 0.4 }}>
-          <SplashScreen
-            preload={loadCharacterSelection}
-            onReady={() => {
-              setPlayer(createGuestPlayer());
-              setStage("character");
-            }}
-          />
-        </motion.div>
-      )}
-    </AnimatePresence>
+            <GameStageErrorBoundary
+              key="character-boundary"
+              fallback={(resetError) => (
+                <StageFailure
+                  onBack={() => {
+                    resetError();
+                    restart();
+                  }}
+                />
+              )}
+            >
+              <Suspense fallback={<StageLoading label="Carregando seleção de personagem..." />}>
+                <CharacterSelection
+                  player={player}
+                  onSelect={(selectedAvatar, nome) => {
+                    // ainda dentro do clique em "Começar jogo": celular/tablet vai para
+                    // tela cheia na horizontal (no PC não faz nada)
+                    enterImmersive();
+                    setPlayer({ ...player, nome });
+                    setAvatar(selectedAvatar);
+                    setStage("game");
+                  }}
+                />
+              </Suspense>
+            </GameStageErrorBoundary>
+          </motion.div>
+        ) : (
+          <motion.div key="login" exit={{ opacity: 0, scale: 0.98 }} transition={{ duration: 0.4 }}>
+            <SplashScreen
+              preload={loadCharacterSelection}
+              onReady={() => {
+                setPlayer(createGuestPlayer());
+                setStage("character");
+              }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 

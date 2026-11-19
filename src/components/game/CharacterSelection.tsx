@@ -72,7 +72,7 @@ export function CharacterSelection({
   };
 
   return (
-    <main className="relative flex min-h-[100dvh] justify-center overflow-hidden bg-[#0f0b1e] px-4 pb-28 pt-6 text-white">
+    <main className="relative flex min-h-[100dvh] justify-center overflow-hidden bg-[#0f0b1e] px-4 pb-28 pt-16 text-white">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_25%,rgba(124,58,237,0.22),transparent_58%)]" />
       <motion.section
         initial={{ opacity: 0, y: 24 }}
